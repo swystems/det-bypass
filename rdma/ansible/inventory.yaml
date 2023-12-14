@@ -1,0 +1,14 @@
+all:
+  hosts:
+    xdp1:
+      ansible_host: swystems.xdp1
+      devs: 
+        - ibp1s0
+    xdp2:
+      ansible_host: swystems.xdp2
+      devs: 
+        - ibp1s0
+  
+  vars:
+    ansible_user: mdr
+    cpu_freq: 2400000000 # 2.4 GHz
