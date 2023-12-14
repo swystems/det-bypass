@@ -31,11 +31,9 @@
  *	}
  */
 #ifndef container_of
-#define container_of(member_ptr, containing_type, member)		\
-	 ((containing_type *)						\
-	  ((char *)(member_ptr)						\
-	   - container_off(containing_type, member))			\
-	  + check_types_match(*(member_ptr), ((containing_type *)0)->member))
+#define container_of(member_ptr, containing_type, member)                                 \
+    ((containing_type *) ((char *) (member_ptr) -container_off (containing_type, member)) \
+     + check_types_match (*(member_ptr), ((containing_type *) 0)->member))
 #endif
 
 /**
@@ -63,15 +61,16 @@
  *		return container_of_or_null(foo, struct info, my_foo);
  *	}
  */
-static inline char *container_of_or_null_(void *member_ptr, size_t offset)
+static inline char *
+container_of_or_null_ (void *member_ptr, size_t offset)
 {
-	return member_ptr ? (char *)member_ptr - offset : NULL;
+    return member_ptr ? (char *) member_ptr - offset : NULL;
 }
-#define container_of_or_null(member_ptr, containing_type, member)	\
-	((containing_type *)						\
-	 container_of_or_null_(member_ptr,				\
-			       container_off(containing_type, member))	\
-	 + check_types_match(*(member_ptr), ((containing_type *)0)->member))
+#define container_of_or_null(member_ptr, containing_type, member)        \
+    ((containing_type *)                                                 \
+         container_of_or_null_ (member_ptr,                              \
+                                container_off (containing_type, member)) \
+     + check_types_match (*(member_ptr), ((containing_type *) 0)->member))
 
 /**
  * container_off - get offset to enclosing structure
@@ -97,8 +96,8 @@ static inline char *container_of_or_null_(void *member_ptr, size_t offset)
  *		return (void *)((char *)foo - off);
  *	}
  */
-#define container_off(containing_type, member)	\
-	offsetof(containing_type, member)
+#define container_off(containing_type, member) \
+    offsetof (containing_type, member)
 
 /**
  * container_of_var - get pointer to enclosing structure using a variable
@@ -118,11 +117,10 @@ static inline char *container_of_or_null_(void *member_ptr, size_t offset)
  */
 #if HAVE_TYPEOF
 #define container_of_var(member_ptr, container_var, member) \
-	container_of(member_ptr, typeof(*container_var), member)
+    container_of (member_ptr, typeof (*container_var), member)
 #else
-#define container_of_var(member_ptr, container_var, member)	\
-	((void *)((char *)(member_ptr)	-			\
-		  container_off_var(container_var, member)))
+#define container_of_var(member_ptr, container_var, member) \
+    ((void *) ((char *) (member_ptr) -container_off_var (container_var, member)))
 #endif
 
 /**
@@ -136,11 +134,11 @@ static inline char *container_of_or_null_(void *member_ptr, size_t offset)
  *
  */
 #if HAVE_TYPEOF
-#define container_off_var(var, member)		\
-	container_off(typeof(*var), member)
+#define container_off_var(var, member) \
+    container_off (typeof (*var), member)
 #else
-#define container_off_var(var, member)			\
-	((const char *)&(var)->member - (const char *)(var))
+#define container_off_var(var, member) \
+    ((const char *) &(var)->member - (const char *) (var))
 #endif
 
 #endif /* CCAN_CONTAINER_OF_H */

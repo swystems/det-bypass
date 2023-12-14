@@ -16,7 +16,7 @@
  *	fprintf(stderr, "Error: %s (%s)\n", reason, strerror(errno));
  * }
  */
-#define COLD __attribute__((__cold__))
+#define COLD __attribute__ ((__cold__))
 #endif
 
 #ifndef NORETURN
@@ -32,7 +32,7 @@
  *	exit(1);
  * }
  */
-#define NORETURN __attribute__((__noreturn__))
+#define NORETURN __attribute__ ((__noreturn__))
 #endif
 
 #ifndef PRINTF_FMT
@@ -47,7 +47,7 @@
  * void PRINTF_FMT(2,3) my_printf(const char *prefix, const char *fmt, ...);
  */
 #define PRINTF_FMT(nfmt, narg) \
-	__attribute__((format(__printf__, nfmt, narg)))
+    __attribute__ ((format (__printf__, nfmt, narg)))
 #endif
 
 #ifndef CONST_FUNCTION
@@ -58,7 +58,7 @@
  * same value for the exact same arguments.  This implies that the function
  * must not use global variables, or dereference pointer arguments.
  */
-#define CONST_FUNCTION __attribute__((__const__))
+#define CONST_FUNCTION __attribute__ ((__const__))
 
 #ifndef PURE_FUNCTION
 /**
@@ -67,7 +67,7 @@
  * A pure function is one that has no side effects other than it's return value
  * and uses no inputs other than it's arguments and global variables.
  */
-#define PURE_FUNCTION __attribute__((__pure__))
+#define PURE_FUNCTION __attribute__ ((__pure__))
 #endif
 #endif
 
@@ -88,7 +88,7 @@
  *	counter += add;
  * }
  */
-#define UNNEEDED __attribute__((__unused__))
+#define UNNEEDED __attribute__ ((__unused__))
 #endif
 
 #ifndef NEEDED
@@ -106,7 +106,7 @@
  *		printf("Counter is %i\n", counter);
  *	}
  */
-#define NEEDED __attribute__((__used__))
+#define NEEDED __attribute__ ((__used__))
 #endif
 
 #ifndef UNUSED
@@ -124,7 +124,7 @@
  *		return 0;
  *	}
  */
-#define UNUSED __attribute__((__unused__))
+#define UNUSED __attribute__ ((__unused__))
 #endif
 
 #ifndef IS_COMPILE_CONSTANT
@@ -163,7 +163,7 @@
  *	#define greek_name(g)						\
  *		 (IS_COMPILE_CONSTANT(greek) ? _greek_name(g) : greek_name(g))
  */
-#define IS_COMPILE_CONSTANT(expr) __builtin_constant_p(expr)
+#define IS_COMPILE_CONSTANT(expr) __builtin_constant_p (expr)
 #endif
 
 #ifndef WARN_UNUSED_RESULT
@@ -180,9 +180,8 @@
  *	return realloc(buf, (*size) *= 2);
  * }
  */
-#define WARN_UNUSED_RESULT __attribute__((__warn_unused_result__))
+#define WARN_UNUSED_RESULT __attribute__ ((__warn_unused_result__))
 #endif
-
 
 /**
  * WARN_DEPRECATED - warn that a function/type/variable is deprecated when used.
@@ -192,8 +191,7 @@
  * Example:
  * WARN_DEPRECATED char *oldfunc(char *buf);
  */
-#define WARN_DEPRECATED __attribute__((__deprecated__))
-
+#define WARN_DEPRECATED __attribute__ ((__deprecated__))
 
 /**
  * NO_NULL_ARGS - specify that no arguments to this function can be NULL.
@@ -203,7 +201,7 @@
  * Example:
  * NO_NULL_ARGS char *my_copy(char *buf);
  */
-#define NO_NULL_ARGS __attribute__((__nonnull__))
+#define NO_NULL_ARGS __attribute__ ((__nonnull__))
 
 /**
  * NON_NULL_ARGS - specify that some arguments to this function can't be NULL.
@@ -214,8 +212,7 @@
  * Example:
  * char *my_copy2(char *buf, char *maybenull) NON_NULL_ARGS(1);
  */
-#define NON_NULL_ARGS(...) __attribute__((__nonnull__(__VA_ARGS__)))
-
+#define NON_NULL_ARGS(...) __attribute__ ((__nonnull__ (__VA_ARGS__)))
 
 /**
  * LAST_ARG_NULL - specify the last argument of a variadic function must be NULL.
@@ -225,6 +222,6 @@
  * Example:
  * char *join_string(char *buf, ...) LAST_ARG_NULL;
  */
-#define LAST_ARG_NULL __attribute__((__sentinel__))
+#define LAST_ARG_NULL __attribute__ ((__sentinel__))
 
 #endif /* CCAN_COMPILER_H */
