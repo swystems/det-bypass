@@ -125,8 +125,14 @@ struct pingpong_context {
 
     // Buffer to be used as memory region.
     // My guess is that the buffer used in ibv_mr is not managed, but it must be created and freed autonomously.
-    char *buf;
+    union {
+        struct pingpong_payload *pp_buf;
+        char *buf;
+    };
 
+    // Store all the pingpong payload structs.
+    struct pingpong_payload *pps;
+    int pps_idx;
 
     int size;
 
@@ -439,7 +445,7 @@ out:
 }
 
 static struct pingpong_context *
-pp_init_ctx (struct ibv_device *ib_dev, int size, int rx_depth, int port, int use_event)
+pp_init_ctx (struct ibv_device *ib_dev, int size, int rx_depth, int port, int use_event, int iters)
 {
     struct pingpong_context *ctx;
     int access_flags = IBV_ACCESS_LOCAL_WRITE;
@@ -460,6 +466,14 @@ pp_init_ctx (struct ibv_device *ib_dev, int size, int rx_depth, int port, int us
     }
 
     memset (ctx->buf, 0x0, size);
+
+    ctx->pps = (struct pingpong_payload *) malloc (sizeof (struct pingpong_payload) * iters);
+    if (!ctx->pps)
+    {
+        fprintf (stderr, "Couldn't allocate work buf.\n");
+        goto clean_buffer;
+    }
+    ctx->pps_idx = 0;
 
     ctx->context = ibv_open_device (ib_dev);
     if (!ctx->context)
@@ -734,6 +748,7 @@ pp_close_ctx (struct pingpong_context *ctx)
         return 1;
     }
 
+    free (ctx->pps);
     free (ctx->buf);
     free (ctx);
 
@@ -803,6 +818,12 @@ struct ts_params {
     unsigned int comp_with_time_iters;
 };
 
+void store_payload (struct pingpong_context *ctx)
+{
+    memcpy (&ctx->pps[ctx->pps_idx], ctx->pp_buf, sizeof (struct pingpong_payload));
+    ctx->pps_idx++;
+}
+
 static inline int
 parse_single_wc (struct pingpong_context *ctx, int *scnt, int *rcnt, int *routs, int iters, uint64_t wr_id,
                  enum ibv_wc_status status, uint64_t completion_timestamp, struct ts_params *ts, bool is_server)
@@ -825,11 +846,14 @@ parse_single_wc (struct pingpong_context *ctx, int *scnt, int *rcnt, int *routs,
 
         if (is_server)
         {
-            LOG("Step 2: Received packet from client");
+            //LOG ("Step 2: Received packet from client");
+            update_payload (ctx->pp_buf, 2);
         }
         else
         {
-            LOG("Step 4: Received packet from server");
+            //LOG ("Step 4: Received packet from server");
+            update_payload (ctx->pp_buf, 4);
+            store_payload (ctx);
         }
 
         if (--(*routs) <= 1)
@@ -879,14 +903,15 @@ parse_single_wc (struct pingpong_context *ctx, int *scnt, int *rcnt, int *routs,
     ctx->pending &= ~(int) wr_id;
     if (*scnt < iters && !ctx->pending)
     {
-        long long now = get_nanos();
         if (is_server)
         {
-            LOG ("Step 3: Sending packet back");
+            //LOG ("Step 3: Sending packet back");
+            update_payload (ctx->pp_buf, 3);
         }
         else
         {
-            LOG ("Step 1: Sending packet to server");
+            //LOG ("Step 1: Sending packet to server");
+            update_payload (ctx->pp_buf, 1);
         }
         if (pp_post_send (ctx))
         {
@@ -1167,7 +1192,7 @@ int main (int argc, char *argv[])
     }
 
     // Create the context of the pingpong app
-    ctx = pp_init_ctx (ib_dev, size, rx_depth, ib_port, use_event);
+    ctx = pp_init_ctx (ib_dev, size, rx_depth, ib_port, use_event, iters);
     if (!ctx)
         return 1;
 
@@ -1261,6 +1286,7 @@ int main (int argc, char *argv[])
                 return 1;
             }
 
+        update_payload (ctx->pp_buf, 1);
         if (pp_post_send (ctx))
         {
             fprintf (stderr, "Couldn't post send\n");
@@ -1402,6 +1428,9 @@ int main (int argc, char *argv[])
         }
     }
 
+    if (servername)
+        save_payloads_to_file (ctx->pps, ctx->pps_idx);
+
     ibv_ack_cq_events (pp_cq (ctx), num_cq_events);
 
     if (pp_close_ctx (ctx))
@@ -1409,6 +1438,5 @@ int main (int argc, char *argv[])
 
     ibv_free_device_list (dev_list);
     free (rem_dest);
-
     return 0;
 }

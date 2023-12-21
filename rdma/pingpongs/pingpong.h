@@ -64,6 +64,15 @@ int pp_get_port_info (struct ibv_context *context, int port,
 void wire_gid_to_gid (const char *wgid, union ibv_gid *gid);
 void gid_to_wire_gid (const union ibv_gid *gid, char wgid[]);
 
+void print_payload (struct pingpong_payload *payload);
+void update_payload (struct pingpong_payload *payload, int stage);
+void save_payloads_to_file (struct pingpong_payload *payloads, int num_payloads);
+
 long long get_nanos (void);
 
 #endif /* IBV_PINGPONG_H */
+
+
+
+
+

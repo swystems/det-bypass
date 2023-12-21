@@ -100,3 +100,61 @@ long long get_nanos (void)
     timespec_get (&ts, TIME_UTC);
     return (long long) ts.tv_sec * 1000000000L + ts.tv_nsec;
 }
+
+void print_payload (struct pingpong_payload *payload)
+{
+    printf ("%lu\t%lu\t%lu\t%lu\n", payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]);
+}
+
+/**
+ * Update the payload with the current timestamp.
+ * Stage is the current stage of the pingpong packet between 1 and 4 inclusive.
+ *
+ * @param payload the payload to update
+ * @param stage the stage of the payload
+ */
+void update_payload (struct pingpong_payload *payload, int stage)
+{
+    payload->ts[stage - 1] = get_nanos ();
+}
+
+/**
+ * Save the payloads to a file.
+ *
+ * @param payloads the payloads to save
+ * @param num_payloads the number of payloads to save
+ * @param filename the name of the file to save to
+ */
+void save_payloads_to_file (struct pingpong_payload *payloads, int num_payloads)
+{
+    // create folder "results" if it doesn't exist
+    system ("mkdir -p results");
+    FILE *fp = fopen ("results/payloads.txt", "w");
+    if (fp == NULL)
+    {
+        perror ("fopen");
+        exit (EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < num_payloads; i++)
+    {
+        fprintf (fp, "%lu\t%lu\t%lu\t%lu\n", payloads[i].ts[0], payloads[i].ts[1], payloads[i].ts[2], payloads[i].ts[3]);
+    }
+
+    fclose (fp);
+
+    fp = fopen ("results/latencies.txt", "w");
+    if (fp == NULL)
+    {
+        perror ("fopen");
+        exit (EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < num_payloads; i++)
+    {
+        double latency = (((double) payloads[i].ts[3] - payloads[i].ts[0]) - ((double) payloads[i].ts[2] - payloads[i].ts[1])) / 2;
+        fprintf (fp, "%f\n", latency);
+    }
+
+    fclose (fp);
+}
