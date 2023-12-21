@@ -56,6 +56,12 @@ int pp_get_port_info (struct ibv_context *context, int port,
     return ibv_query_port (context, port, attr);
 }
 
+/**
+ * Convert a wire gid string to a gid structure.
+ *
+ * @param wgid the wire gid string
+ * @param gid the gid structure
+ */
 void wire_gid_to_gid (const char *wgid, union ibv_gid *gid)
 {
     char tmp[9];
@@ -72,6 +78,12 @@ void wire_gid_to_gid (const char *wgid, union ibv_gid *gid)
     memcpy (gid, tmp_gid, sizeof (*gid));
 }
 
+/**
+ * Convert a gid structure to a gid string to be transmitted.
+ *
+ * @param gid the gid structure
+ * @param wgid the wire gid string
+ */
 void gid_to_wire_gid (const union ibv_gid *gid, char wgid[])
 {
     uint32_t tmp_gid[4];
@@ -80,4 +92,11 @@ void gid_to_wire_gid (const union ibv_gid *gid, char wgid[])
     memcpy (tmp_gid, gid, sizeof (tmp_gid));
     for (i = 0; i < 4; ++i)
         sprintf (&wgid[i * 8], "%08x", htobe32 (tmp_gid[i]));
+}
+
+long long get_nanos (void)
+{
+    struct timespec ts;
+    timespec_get (&ts, TIME_UTC);
+    return (long long) ts.tv_sec * 1000000000L + ts.tv_nsec;
 }

@@ -36,6 +36,7 @@
 #include <inttypes.h>
 #include <malloc.h>
 #include <netdb.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,54 +49,148 @@
 #include "ccan/minmax.h"
 #include "pingpong.h"
 
+/**
+ * The ID of the receive and send work requests.
+ */
 enum {
     PINGPONG_RECV_WRID = 1,
     PINGPONG_SEND_WRID = 2,
 };
 
+// Size of the pages in the system.
 static int page_size;
+// On Demand Paging (ODP): a technique to reduce the latency of the memory access.
+// Without ODP, all the pages are allocated in memory when registered.
+// With Explicit ODP, the program must register the pages but they are dynamically loaded when needed.
+// With Implicit ODP, the program can define the memory region with a "key", and the actual registration and loading
+// of the pages is done by the HCA (Host Channel Adapter).
+//
+// Reference: https://enterprise-support.nvidia.com/s/article/understanding-on-demand-paging--odp-x
 static int use_odp;
 static int implicit_odp;
+
+// Whether to prefetch the ODP memory region.
 static int prefetch_mr;
+
+// Whether to do timestamping at NIC-time.
 static int use_ts;
+
+// Whether the received buffer should be validated for correctness.
+// This is simply done by memsetting the buffer to a specific value by the sender, and checked for the same values
+// by the receiver.
 static int validate_buf;
+
+// Whether to use Device Memory (DM).
+// Device Memory is a memory region that is directly accessible by the devices, without the need of the CPU.
+// The difference with Memory Region (MR) is that the MR is managed by the CPU, while the DM is managed by the devices(?)
 static int use_dm;
+
+// Whether to use the new send API.
+// The new send API is a new API that allows to send multiple messages with a single call.
 static int use_new_send;
 
 struct pingpong_context {
     struct ibv_context *context;
     struct ibv_comp_channel *channel;
+
+    // Protection Domain (PD) of the app.
+    // Reference: https://www.ibm.com/docs/en/sdk-java-technology/8?topic=jverbs-protectiondomain
     struct ibv_pd *pd;
+
+    // Memory Region (MR) to be used by the devices to write and read memory.
+    // Reference: https://www.rdmamojo.com/2012/09/07/ibv_reg_mr/
     struct ibv_mr *mr;
+
+    // Device Memory (DM) idk???
     struct ibv_dm *dm;
+
     union {
+        // Completion queue (CQ)
+        // Reference: https://man7.org/linux/man-pages/man3/ibv_create_cq.3.html
         struct ibv_cq *cq;
+
+        // Extended completion queue (CQ_EX)
+        // Reference: https://man7.org/linux/man-pages/man3/ibv_create_cq_ex.3.html
+        // This struct is generated when the timestamps are taken at NIC-time.
         struct ibv_cq_ex *cq_ex;
     } cq_s;
+
+    // Queue Pair (QP): a pair of send and receive queue.
     struct ibv_qp *qp;
+
+    // Extended Queue Pair (QP_EX)
+    // As far as I understand it, the major difference between normal structs and extended structs is only the
+    // fact that extended structs contain pointers to functions (simil-OOP).
     struct ibv_qp_ex *qpx;
+
+    // Buffer to be used as memory region.
+    // My guess is that the buffer used in ibv_mr is not managed, but it must be created and freed autonomously.
     char *buf;
+
+
     int size;
+
     int send_flags;
+
+    // Number of receives to post at a time.
+    // I understand the goal, I do not understand the naming (depth?).
     int rx_depth;
+
+    // The next message expected (I guess?) i.e. ping or pong.
     int pending;
+
     struct ibv_port_attr portinfo;
+
     uint64_t completion_timestamp_mask;
 };
 
+/**
+ * Retrieve the Completion Queue from the context.
+ * This is always the normal Completion Queue, unless timestamping is not enabled;
+ * in that case, the extended completion queue is taken, casted and then returned.
+ *
+ * @param ctx The pingpong context.
+ * @return The completion queue.
+ */
 static struct ibv_cq *
 pp_cq (struct pingpong_context *ctx)
 {
     return use_ts ? ibv_cq_ex_to_cq (ctx->cq_s.cq_ex) : ctx->cq_s.cq;
 }
 
+/**
+ * Destination of a pingpong packet.
+ */
 struct pingpong_dest {
+    // LID (Layer 2): InfiniBand version of MAC address(?)
     int lid;
+
+    // QPN (Queue Pair Number): the ID of the queue pair the packet is destinated to.
+    // In Reliable Channel, each queue pair is linked with another queue pair.
     int qpn;
+
+    // PSN (Packet Sequence Number): the ID of the packet.
+    // In a Reliable Channel, the PSN is an incrementing number identifying the packet; at receiver-side, packets are
+    // ordered based on this number.
     int psn;
+
+    // GID (Global IDentifier): 128-bit IPv6 address withing InfiniBand networks.
+    // In RoCE, it is associated in a GID table with the IP of the host in the network.
     union ibv_gid gid;
 };
 
+/**
+ * Connect the application with the destination.
+ *
+ * @param ctx the context of the pingpong app
+ * @param port the port of this host
+ * @param my_psn the
+ * @param mtu
+ * @param sl
+ * @param dest
+ * @param sgid_idx
+ * @return
+ */
 static int
 pp_connect_ctx (struct pingpong_context *ctx, int port, int my_psn, enum ibv_mtu mtu, int sl, struct pingpong_dest *dest,
                 int sgid_idx)
@@ -131,11 +226,19 @@ pp_connect_ctx (struct pingpong_context *ctx, int port, int my_psn, enum ibv_mtu
     return 0;
 }
 
+/**
+ * As a client machine, exchange the destination information with the specified server.
+ * @param servername the ip address of the server
+ * @param port the port of the server
+ * @param my_dest the local destination information
+ * @return the destination information of the server
+ */
 static struct pingpong_dest *
 pp_client_exch_dest (const char *servername, int port, const struct pingpong_dest *my_dest)
 {
     struct addrinfo *res, *t;
     struct addrinfo hints = {.ai_family = AF_UNSPEC, .ai_socktype = SOCK_STREAM};
+    // Contains the port number as a string. Allocation happens in `asprintf`.
     char *service;
     char msg[sizeof "0000:000000:000000:00000000000000000000000000000000"];
     int n;
@@ -146,6 +249,7 @@ pp_client_exch_dest (const char *servername, int port, const struct pingpong_des
     if (asprintf (&service, "%d", port) < 0)
         return NULL;
 
+    // Get the socket addresses of the server.
     n = getaddrinfo (servername, service, &hints, &res);
 
     if (n < 0)
@@ -155,6 +259,7 @@ pp_client_exch_dest (const char *servername, int port, const struct pingpong_des
         return NULL;
     }
 
+    // Try to connect to all the sockets until one succeeds.
     for (t = res; t; t = t->ai_next)
     {
         sockfd = socket (t->ai_family, t->ai_socktype, t->ai_protocol);
@@ -170,20 +275,26 @@ pp_client_exch_dest (const char *servername, int port, const struct pingpong_des
     freeaddrinfo (res);
     free (service);
 
+    // If no connection was established, return NULL.
     if (sockfd < 0)
     {
         fprintf (stderr, "Couldn't connect to %s:%d\n", servername, port);
         return NULL;
     }
 
+    // Format the GID to send it to the server as a string.
     gid_to_wire_gid (&my_dest->gid, gid);
+    // Generate the message to send to the server with the local address.
     sprintf (msg, "%04x:%06x:%06x:%s", my_dest->lid, my_dest->qpn, my_dest->psn, gid);
+
+    // Send the message to the server.
     if (write (sockfd, msg, sizeof msg) != sizeof msg)
     {
         fprintf (stderr, "Couldn't send local address\n");
         goto out;
     }
 
+    // Receive the message from the server.
     if (read (sockfd, msg, sizeof msg) != sizeof msg || write (sockfd, "done", sizeof "done") != sizeof "done")
     {
         perror ("client read/write");
@@ -191,11 +302,14 @@ pp_client_exch_dest (const char *servername, int port, const struct pingpong_des
         goto out;
     }
 
+    // Allocated the struct for the remote address.
     rem_dest = malloc (sizeof *rem_dest);
     if (!rem_dest)
         goto out;
 
+    // Parse the message received from the server.
     sscanf (msg, "%x:%x:%x:%s", &rem_dest->lid, &rem_dest->qpn, &rem_dest->psn, gid);
+    // Convert the GID string to a GID struct.
     wire_gid_to_gid (gid, &rem_dest->gid);
 
 out:
@@ -203,6 +317,17 @@ out:
     return rem_dest;
 }
 
+/**
+ * As a server machine, exchange the destination information with any connecting client.
+ * @param ctx the application context
+ * @param ib_port the port of the InfiniBand device
+ * @param mtu the MTU of the connection
+ * @param port the port for the server to listen to
+ * @param sl the service level
+ * @param my_dest the local destination information
+ * @param sgid_idx the index of the GID
+ * @return
+ */
 static struct pingpong_dest *
 pp_server_exch_dest (struct pingpong_context *ctx, int ib_port, enum ibv_mtu mtu, int port, int sl,
                      const struct pingpong_dest *my_dest, int sgid_idx)
@@ -228,6 +353,7 @@ pp_server_exch_dest (struct pingpong_context *ctx, int ib_port, enum ibv_mtu mtu
         return NULL;
     }
 
+    // Try to bind to all the sockets until one succeeds.
     for (t = res; t; t = t->ai_next)
     {
         sockfd = socket (t->ai_family, t->ai_socktype, t->ai_protocol);
@@ -247,14 +373,20 @@ pp_server_exch_dest (struct pingpong_context *ctx, int ib_port, enum ibv_mtu mtu
     freeaddrinfo (res);
     free (service);
 
+    // If it was not possible to bind to any socket, abort.
     if (sockfd < 0)
     {
         fprintf (stderr, "Couldn't listen to port %d\n", port);
         return NULL;
     }
 
+    // Start listening to the socket, waiting for client connections.
     listen (sockfd, 1);
+
+    // Accept the connection from the client.
     connfd = accept (sockfd, NULL, NULL);
+
+    // Close the listening socket, we got the client.
     close (sockfd);
     if (connfd < 0)
     {
@@ -262,6 +394,7 @@ pp_server_exch_dest (struct pingpong_context *ctx, int ib_port, enum ibv_mtu mtu
         return NULL;
     }
 
+    // Read the message from the client, containing its local address.
     n = read (connfd, msg, sizeof msg);
     if (n != sizeof msg)
     {
@@ -274,9 +407,11 @@ pp_server_exch_dest (struct pingpong_context *ctx, int ib_port, enum ibv_mtu mtu
     if (!rem_dest)
         goto out;
 
+    // Parse and store the address information of the client
     sscanf (msg, "%x:%x:%x:%s", &rem_dest->lid, &rem_dest->qpn, &rem_dest->psn, gid);
     wire_gid_to_gid (gid, &rem_dest->gid);
 
+    // Connect to the Queue Pair of the client.
     if (pp_connect_ctx (ctx, ib_port, my_dest->psn, mtu, sl, rem_dest, sgid_idx))
     {
         fprintf (stderr, "Couldn't connect to remote QP\n");
@@ -285,8 +420,11 @@ pp_server_exch_dest (struct pingpong_context *ctx, int ib_port, enum ibv_mtu mtu
         goto out;
     }
 
+    // Create the message to send to the client, containing the local address.
     gid_to_wire_gid (&my_dest->gid, gid);
     sprintf (msg, "%04x:%06x:%06x:%s", my_dest->lid, my_dest->qpn, my_dest->psn, gid);
+
+    // Send the message to the client.
     if (write (connfd, msg, sizeof msg) != sizeof msg || read (connfd, msg, sizeof msg) != sizeof "done")
     {
         fprintf (stderr, "Couldn't send/recv local address\n");
@@ -321,8 +459,7 @@ pp_init_ctx (struct ibv_device *ib_dev, int size, int rx_depth, int port, int us
         goto clean_ctx;
     }
 
-    /* FIXME memset(ctx->buf, 0, size); */
-    memset (ctx->buf, 0x7b, size);
+    memset (ctx->buf, 0x0, size);
 
     ctx->context = ibv_open_device (ib_dev);
     if (!ctx->context)
@@ -463,7 +600,7 @@ pp_init_ctx (struct ibv_device *ib_dev, int size, int rx_depth, int port, int us
 
     {
         struct ibv_qp_attr attr;
-        struct ibv_qp_init_attr init_attr = {.send_cq = pp_cq (ctx), .recv_cq = pp_cq (ctx), .cap = {.max_send_wr = 1, .max_recv_wr = rx_depth, .max_send_sge = 1, .max_recv_sge = 1}, .qp_type = IBV_QPT_RC};
+        struct ibv_qp_init_attr init_attr = {.send_cq = pp_cq (ctx), .recv_cq = pp_cq (ctx), .cap = {.max_send_wr = 1, .max_recv_wr = rx_depth, .max_send_sge = 1, .max_recv_sge = 1}, .qp_type = IBV_QPT_RC, .sq_sig_all = 0};
 
         if (use_new_send)
         {
@@ -619,6 +756,8 @@ pp_post_recv (struct pingpong_context *ctx, int n)
         if (ibv_post_recv (ctx->qp, &wr, &bad_wr))
             break;
 
+    //LOG ("Posted %d receives\n", i);
+
     return i;
 }
 
@@ -634,6 +773,8 @@ pp_post_send (struct pingpong_context *ctx)
         .send_flags = ctx->send_flags,
     };
     struct ibv_send_wr *bad_wr;
+
+    //LOG ("Posting send\n");
 
     if (use_new_send)
     {
@@ -664,7 +805,7 @@ struct ts_params {
 
 static inline int
 parse_single_wc (struct pingpong_context *ctx, int *scnt, int *rcnt, int *routs, int iters, uint64_t wr_id,
-                 enum ibv_wc_status status, uint64_t completion_timestamp, struct ts_params *ts)
+                 enum ibv_wc_status status, uint64_t completion_timestamp, struct ts_params *ts, bool is_server)
 {
     if (status != IBV_WC_SUCCESS)
     {
@@ -675,10 +816,22 @@ parse_single_wc (struct pingpong_context *ctx, int *scnt, int *rcnt, int *routs,
     switch ((int) wr_id)
     {
     case PINGPONG_SEND_WRID:
+        //LOG ("Send event completed\n");
         ++(*scnt);
         break;
 
     case PINGPONG_RECV_WRID:
+        //LOG ("Recv event completed\n");
+
+        if (is_server)
+        {
+            LOG("Step 2: Received packet from client");
+        }
+        else
+        {
+            LOG("Step 4: Received packet from server");
+        }
+
         if (--(*routs) <= 1)
         {
             *routs += pp_post_recv (ctx, ctx->rx_depth - *routs);
@@ -726,6 +879,15 @@ parse_single_wc (struct pingpong_context *ctx, int *scnt, int *rcnt, int *routs,
     ctx->pending &= ~(int) wr_id;
     if (*scnt < iters && !ctx->pending)
     {
+        long long now = get_nanos();
+        if (is_server)
+        {
+            LOG ("Step 3: Sending packet back");
+        }
+        else
+        {
+            LOG ("Step 1: Sending packet to server");
+        }
         if (pp_post_send (ctx))
         {
             fprintf (stderr, "Couldn't post send\n");
@@ -766,29 +928,54 @@ usage (const char *argv0)
 
 int main (int argc, char *argv[])
 {
+    // List of devices available in the local system
     struct ibv_device **dev_list;
+    // Device to be used by the application
     struct ibv_device *ib_dev;
+    // Context of the pingpong app
     struct pingpong_context *ctx;
+    // "Address" of the local machine
     struct pingpong_dest my_dest;
+    // "Address" of the remote machine
     struct pingpong_dest *rem_dest;
+    // Start and end timestamps of the pingpong
     struct timeval start, end;
-    char *ib_devname = NULL;// network device to use
+    // Name of the network device to be used (optional: the first one is used if unspecified)
+    char *ib_devname = NULL;
+    // Name of the server to connect to (client-mode only)
     char *servername = NULL;
-    unsigned int port = 18515;// port of the server
+    // Port of the communication
+    unsigned int port = 18515;
+    // InfiniBand port to be used in the device
     int ib_port = 1;
+    // Size of the message to be exchanged
     unsigned int size = 4096;
+    // MTU of the communication
     enum ibv_mtu mtu = IBV_MTU_1024;
+    // Number of receives to post at a time
     unsigned int rx_depth = 500;
+    // Number of iterations to perform (i.e. number of messages to exchange)
     unsigned int iters = 1000;
+    // Sleep on CQ events (default poll)
     int use_event = 0;
+
+    // Number of "receive" actually posted
     int routs;
+    // Number of received and sent messages
     int rcnt, scnt;
+    // Number of CQ events
     int num_cq_events = 0;
+    // Service level value, used to prioritize packets. The higher the value, the higher the priority.
     int sl = 0;
+    // Index of the GID to be used.
     int gidx = -1;
+    // GID of the local machine
     char gid[33];
+    // Data about the timestamp of the messages.
     struct ts_params ts;
 
+    // Randomize the random generator seed.
+    // This is useful, since the initial PSN is random.
     srand48 (getpid () * time (NULL));
 
     while (1)
@@ -814,8 +1001,10 @@ int main (int argc, char *argv[])
                                                {.name = "new_send", .has_arg = 0, .val = 'N'},
                                                {}};
 
+        // Retrieve the next option name
         c = getopt_long (argc, argv, "p:d:i:s:m:r:n:l:eg:oOPtcjN", long_options, NULL);
 
+        // If there is no more option to parse, stop
         if (c == -1)
             break;
 
@@ -908,19 +1097,25 @@ int main (int argc, char *argv[])
     }
 
     if (optind == argc - 1)
+        // There is a non-optional argument, i.e. the IP of the server to connect to
+        // Therefore, we are in client mode
         servername = strdupa (argv[optind]);
     else if (optind < argc)
     {
+        // There are more than one non-optional arguments, which is an error
         usage (argv[0]);
         return 1;
     }
 
+    // Device Memory and On-Demand Paging are mutually exclusive, since Device Memory is handled without the
+    // use of CPU; therefore, it is not possible to handle a page fault and on-demand paging cannot be used.
     if (use_odp && use_dm)
     {
         fprintf (stderr, "DM memory region can't be on demand\n");
         return 1;
     }
 
+    // Prefetching make sense only if on-demand paging is used, otherwise the pages are already in memory
     if (!use_odp && prefetch_mr)
     {
         fprintf (stderr, "prefetch is valid only with on-demand memory region\n");
@@ -939,6 +1134,7 @@ int main (int argc, char *argv[])
 
     page_size = sysconf (_SC_PAGESIZE);
 
+    // Retrieve the list of IB devices available in the local system
     dev_list = ibv_get_device_list (NULL);
     if (!dev_list)
     {
@@ -946,6 +1142,7 @@ int main (int argc, char *argv[])
         return 1;
     }
 
+    // If no device name is specified, use the first one in the list
     if (!ib_devname)
     {
         ib_dev = *dev_list;
@@ -969,10 +1166,13 @@ int main (int argc, char *argv[])
         }
     }
 
+    // Create the context of the pingpong app
     ctx = pp_init_ctx (ib_dev, size, rx_depth, ib_port, use_event);
     if (!ctx)
         return 1;
 
+    // Post the receive buffers.
+    // `pp_post_recv` returns the actual number of posted `receive`.
     routs = pp_post_recv (ctx, ctx->rx_depth);
     if (routs < ctx->rx_depth)
     {
@@ -980,20 +1180,25 @@ int main (int argc, char *argv[])
         return 1;
     }
 
+    // Completion notifications must be enabled if needed
     if (use_event)
+        // Request notifications from the cq of the app
         if (ibv_req_notify_cq (pp_cq (ctx), 0))
         {
             fprintf (stderr, "Couldn't request CQ notification\n");
             return 1;
         }
 
+    // Retrieve information about the port used in the device...
     if (pp_get_port_info (ctx->context, ib_port, &ctx->portinfo))
     {
         fprintf (stderr, "Couldn't get port info\n");
         return 1;
     }
 
+    // ... and set it in the "local address"
     my_dest.lid = ctx->portinfo.lid;
+    // If RoCE is not used, the LID *must* be specified, since it identifies the destination; in RoCE, Ethernet is used.
     if (ctx->portinfo.link_layer != IBV_LINK_LAYER_ETHERNET && !my_dest.lid)
     {
         fprintf (stderr, "Couldn't get local LID\n");
@@ -1002,6 +1207,7 @@ int main (int argc, char *argv[])
 
     if (gidx >= 0)
     {
+        // If a GID index is specified, retrieve the GID of the local machine
         if (ibv_query_gid (ctx->context, ib_port, gidx, &my_dest.gid))
         {
             fprintf (stderr, "can't read sgid of index %d\n", gidx);
@@ -1009,14 +1215,21 @@ int main (int argc, char *argv[])
         }
     }
     else
+        // Otherwise, use the default GID
         memset (&my_dest.gid, 0, sizeof my_dest.gid);
 
+    // Retrieve the QP number of the context
     my_dest.qpn = ctx->qp->qp_num;
+
+    // Generate a random PSN
     my_dest.psn = lrand48 () & 0xffffff;
+
+    // Retrieve the GID as a IPv6 address
     inet_ntop (AF_INET6, &my_dest.gid, gid, sizeof gid);
     printf ("  local address:  LID 0x%04x, QPN 0x%06x, PSN 0x%06x, GID %s\n", my_dest.lid, my_dest.qpn, my_dest.psn,
             gid);
 
+    // Find information about the remote machine
     if (servername)
         rem_dest = pp_client_exch_dest (servername, port, &my_dest);
     else
@@ -1065,6 +1278,7 @@ int main (int argc, char *argv[])
     rcnt = scnt = 0;
     while (rcnt < iters || scnt < iters)
     {
+        //LOG ("Receive count: %d, Send count: %d\n", rcnt, scnt);
         int ret;
 
         if (use_event)
@@ -1108,7 +1322,7 @@ int main (int argc, char *argv[])
                 return ret;
             }
             ret = parse_single_wc (ctx, &scnt, &rcnt, &routs, iters, ctx->cq_s.cq_ex->wr_id, ctx->cq_s.cq_ex->status,
-                                   ibv_wc_read_completion_ts (ctx->cq_s.cq_ex), &ts);
+                                   ibv_wc_read_completion_ts (ctx->cq_s.cq_ex), &ts, servername == NULL);
             if (ret)
             {
                 ibv_end_poll (ctx->cq_s.cq_ex);
@@ -1117,7 +1331,7 @@ int main (int argc, char *argv[])
             ret = ibv_next_poll (ctx->cq_s.cq_ex);
             if (!ret)
                 ret = parse_single_wc (ctx, &scnt, &rcnt, &routs, iters, ctx->cq_s.cq_ex->wr_id, ctx->cq_s.cq_ex->status,
-                                       ibv_wc_read_completion_ts (ctx->cq_s.cq_ex), &ts);
+                                       ibv_wc_read_completion_ts (ctx->cq_s.cq_ex), &ts, servername == NULL);
             ibv_end_poll (ctx->cq_s.cq_ex);
             if (ret && ret != ENOENT)
             {
@@ -1128,11 +1342,12 @@ int main (int argc, char *argv[])
         else
         {
             int ne, i;
-            struct ibv_wc wc[2];
+            struct ibv_wc wc;
 
             do
             {
-                ne = ibv_poll_cq (pp_cq (ctx), 2, wc);
+                ne = ibv_poll_cq (pp_cq (ctx), 1, &wc);
+                //LOG ("Polled %d CQ events\n", ne);
                 if (ne < 0)
                 {
                     fprintf (stderr, "poll CQ failed %d\n", ne);
@@ -1142,7 +1357,7 @@ int main (int argc, char *argv[])
 
             for (i = 0; i < ne; ++i)
             {
-                ret = parse_single_wc (ctx, &scnt, &rcnt, &routs, iters, wc[i].wr_id, wc[i].status, 0, &ts);
+                ret = parse_single_wc (ctx, &scnt, &rcnt, &routs, iters, wc.wr_id, wc.status, 0, &ts, servername == NULL);
                 if (ret)
                 {
                     fprintf (stderr, "parse WC failed %d\n", ne);
