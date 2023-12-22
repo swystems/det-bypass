@@ -54,6 +54,8 @@ enum {
 static int page_size;
 static int validate_buf;
 
+struct pingpong_data *data;
+
 struct pingpong_context {
     struct ibv_context *context;
     struct ibv_comp_channel *channel;
@@ -66,7 +68,6 @@ struct pingpong_context {
         struct pingpong_payload *pp_buf;
         char *buf;
     };
-    struct pingpong_payload *pps;
     int size;
     int send_flags;
     int rx_depth;
@@ -729,6 +730,8 @@ int main (int argc, char *argv[])
         }
     }
 
+    data = init_pingpong_data (iters);
+
     ctx = pp_init_ctx (ib_dev, size, rx_depth, ib_port, use_event);
     if (!ctx)
         return 1;
@@ -800,6 +803,7 @@ int main (int argc, char *argv[])
             for (int i = 0; i < size; i += page_size)
                 ctx->buf[i + 40] = i / page_size % sizeof (char);
 
+        update_payload (ctx->pp_buf, 1);
         if (pp_post_send (ctx, rem_dest->qpn))
         {
             fprintf (stderr, "Couldn't post send\n");
@@ -874,6 +878,17 @@ int main (int argc, char *argv[])
                     break;
 
                 case PINGPONG_RECV_WRID:
+                    if (servername == NULL)
+                    {
+                        // server
+                        update_payload (ctx->pp_buf, 2);
+                    }
+                    else
+                    {
+                        // client
+                        update_payload (ctx->pp_buf, 4);
+                        store_payload (ctx->pp_buf, data);
+                    }
                     if (--routs <= 1)
                     {
                         routs += pp_post_recv (ctx, ctx->rx_depth - routs);
@@ -896,8 +911,21 @@ int main (int argc, char *argv[])
                 }
 
                 ctx->pending &= ~(int) wc[i].wr_id;
+
                 if (scnt < iters && !ctx->pending)
                 {
+
+                    if (servername == NULL)
+                    {
+                        // server
+                        update_payload (ctx->pp_buf, 3);
+                    }
+                    else
+                    {
+                        // client
+                        update_payload (ctx->pp_buf, 1);
+                    }
+
                     if (pp_post_send (ctx, rem_dest->qpn))
                     {
                         fprintf (stderr, "Couldn't post send\n");
@@ -933,11 +961,15 @@ int main (int argc, char *argv[])
         }
     }
 
+    if (servername)
+        save_payloads_to_file (data, 50, "results/ud/");
+
     ibv_ack_cq_events (ctx->cq, num_cq_events);
 
     if (pp_close_ctx (ctx))
         return 1;
 
+    free_pingpong_data (data);
     ibv_free_device_list (dev_list);
     free (rem_dest);
 

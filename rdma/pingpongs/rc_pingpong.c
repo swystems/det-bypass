@@ -957,7 +957,7 @@ int main (int argc, char *argv[])
     // InfiniBand port to be used in the device
     int ib_port = 1;
     // Size of the message to be exchanged
-    unsigned int size = 4096;
+    unsigned int size = 1024;
     // MTU of the communication
     enum ibv_mtu mtu = IBV_MTU_1024;
     // Number of receives to post at a time
