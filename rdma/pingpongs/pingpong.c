@@ -163,39 +163,43 @@ void store_payload (struct pingpong_payload *payload, struct pingpong_data *data
  * @param num_payloads the number of payloads to save
  * @param filename the name of the file to save to
  */
-void save_payloads_to_file (struct pingpong_data *data, unsigned int warmup)
+void save_payloads_to_file (struct pingpong_data *data, unsigned int warmup, const char *foldername)
 {
     // create folder "results" if it doesn't exist
-    system ("mkdir -p results");
+    char command[100];
+    sprintf (command, "mkdir -p %s", foldername);
+    system (command);
 
     printf ("Total number of payloads: %d\n", data->num_payloads);
     printf ("Number of warmup payloads: %d\n", warmup);
     printf ("Storing %d payloads to file...\n", data->num_payloads - warmup);
 
-    const unsigned int num_payloads = data->num_payloads - warmup;
-
-    FILE *fp = fopen ("results/payloads.txt", "w");
+    // filename is "{foldername}/payloads.txt"
+    char filename[100];
+    sprintf (filename, "%s/payloads.txt", foldername);
+    FILE *fp = fopen (filename, "w");
     if (fp == NULL)
     {
         perror ("fopen");
         exit (EXIT_FAILURE);
     }
 
-    for (int i = 0; i < num_payloads; i++)
+    for (unsigned int i = warmup; i < data->num_payloads; i++)
     {
         fprintf (fp, "%lu\t%lu\t%lu\t%lu\n", data->payloads[i].ts[0], data->payloads[i].ts[1], data->payloads[i].ts[2], data->payloads[i].ts[3]);
     }
 
     fclose (fp);
 
-    fp = fopen ("results/latencies.txt", "w");
+    sprintf (filename, "%s/latencies.txt", foldername);
+    fp = fopen (filename, "w");
     if (fp == NULL)
     {
         perror ("fopen");
         exit (EXIT_FAILURE);
     }
 
-    for (int i = 0; i < num_payloads; i++)
+    for (unsigned int i = warmup; i < data->num_payloads; i++)
     {
         double latency = (((double) data->payloads[i].ts[3] - data->payloads[i].ts[0]) - ((double) data->payloads[i].ts[2] - data->payloads[i].ts[1])) / 2;
         fprintf (fp, "%f\n", latency);

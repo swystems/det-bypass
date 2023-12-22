@@ -57,8 +57,7 @@ struct pingpong_payload {
     uint64_t ts[4];
 } __attribute__ ((packed));
 
-struct pingpong_data
-{
+struct pingpong_data {
     struct pingpong_payload *payloads;
     int num_payloads;
 };
@@ -76,13 +75,8 @@ void free_pingpong_data (struct pingpong_data *data);
 void print_payload (struct pingpong_payload *payload);
 void update_payload (struct pingpong_payload *payload, int stage);
 void store_payload (struct pingpong_payload *payload, struct pingpong_data *data);
-void save_payloads_to_file (struct pingpong_data *data, unsigned int warmup);
+void save_payloads_to_file (struct pingpong_data *data, unsigned int warmup, const char *foldername);
 
 long long get_nanos (void);
 
 #endif /* IBV_PINGPONG_H */
-
-
-
-
-

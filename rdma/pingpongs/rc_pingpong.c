@@ -1415,7 +1415,7 @@ int main (int argc, char *argv[])
     }
 
     if (servername)
-        save_payloads_to_file (pp_data, 50);
+        save_payloads_to_file (pp_data, 50, "results/rc/");
 
     ibv_ack_cq_events (pp_cq (ctx), num_cq_events);
 
