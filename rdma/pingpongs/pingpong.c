@@ -101,6 +101,33 @@ long long get_nanos (void)
     return (long long) ts.tv_sec * 1000000000L + ts.tv_nsec;
 }
 
+struct pingpong_data *init_pingpong_data (int num_payloads)
+{
+    struct pingpong_data *data = malloc (sizeof (struct pingpong_data));
+    if (data == NULL)
+    {
+        perror ("malloc");
+        exit (EXIT_FAILURE);
+    }
+
+    data->payloads = malloc (num_payloads * sizeof (struct pingpong_payload));
+    if (data->payloads == NULL)
+    {
+        perror ("malloc");
+        exit (EXIT_FAILURE);
+    }
+
+    data->num_payloads = 0;
+
+    return data;
+}
+
+void free_pingpong_data (struct pingpong_data *data)
+{
+    free (data->payloads);
+    free (data);
+}
+
 void print_payload (struct pingpong_payload *payload)
 {
     printf ("%lu\t%lu\t%lu\t%lu\n", payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]);
@@ -115,7 +142,18 @@ void print_payload (struct pingpong_payload *payload)
  */
 void update_payload (struct pingpong_payload *payload, int stage)
 {
+    if (stage < 1 || stage > 4)
+    {
+        fprintf (stderr, "update_payload: stage must be between 1 and 4 inclusive\n");
+        exit (EXIT_FAILURE);
+    }
     payload->ts[stage - 1] = get_nanos ();
+}
+
+void store_payload (struct pingpong_payload *payload, struct pingpong_data *data)
+{
+    data->payloads[data->num_payloads] = *payload;
+    data->num_payloads++;
 }
 
 /**
@@ -125,10 +163,17 @@ void update_payload (struct pingpong_payload *payload, int stage)
  * @param num_payloads the number of payloads to save
  * @param filename the name of the file to save to
  */
-void save_payloads_to_file (struct pingpong_payload *payloads, int num_payloads)
+void save_payloads_to_file (struct pingpong_data *data, unsigned int warmup)
 {
     // create folder "results" if it doesn't exist
     system ("mkdir -p results");
+
+    printf ("Total number of payloads: %d\n", data->num_payloads);
+    printf ("Number of warmup payloads: %d\n", warmup);
+    printf ("Storing %d payloads to file...\n", data->num_payloads - warmup);
+
+    const unsigned int num_payloads = data->num_payloads - warmup;
+
     FILE *fp = fopen ("results/payloads.txt", "w");
     if (fp == NULL)
     {
@@ -138,7 +183,7 @@ void save_payloads_to_file (struct pingpong_payload *payloads, int num_payloads)
 
     for (int i = 0; i < num_payloads; i++)
     {
-        fprintf (fp, "%lu\t%lu\t%lu\t%lu\n", payloads[i].ts[0], payloads[i].ts[1], payloads[i].ts[2], payloads[i].ts[3]);
+        fprintf (fp, "%lu\t%lu\t%lu\t%lu\n", data->payloads[i].ts[0], data->payloads[i].ts[1], data->payloads[i].ts[2], data->payloads[i].ts[3]);
     }
 
     fclose (fp);
@@ -152,7 +197,7 @@ void save_payloads_to_file (struct pingpong_payload *payloads, int num_payloads)
 
     for (int i = 0; i < num_payloads; i++)
     {
-        double latency = (((double) payloads[i].ts[3] - payloads[i].ts[0]) - ((double) payloads[i].ts[2] - payloads[i].ts[1])) / 2;
+        double latency = (((double) data->payloads[i].ts[3] - data->payloads[i].ts[0]) - ((double) data->payloads[i].ts[2] - data->payloads[i].ts[1])) / 2;
         fprintf (fp, "%f\n", latency);
     }
 

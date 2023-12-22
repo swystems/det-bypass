@@ -1,5 +1,7 @@
 project(pingpong)
 
+add_compile_options(-g -O2)
+
 add_library(rc_pingpong_lib SHARED pingpong.c)
 add_library(libibverbs SHARED IMPORTED)
 set_property(TARGET libibverbs PROPERTY IMPORTED_LOCATION /usr/lib/x86_64-linux-gnu/libibverbs.so)

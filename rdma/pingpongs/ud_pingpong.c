@@ -62,7 +62,11 @@ struct pingpong_context {
     struct ibv_cq *cq;
     struct ibv_qp *qp;
     struct ibv_ah *ah;
-    char *buf;
+    union {
+        struct pingpong_payload *pp_buf;
+        char *buf;
+    };
+    struct pingpong_payload *pps;
     int size;
     int send_flags;
     int rx_depth;
