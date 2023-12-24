@@ -1,0 +1,48 @@
+---
+- hosts: all
+  gather_facts: True
+  gather_subset:
+    - "!all"
+  tasks:
+    - name: Update packages
+      become: yes
+      shell: |
+        apt update
+        apt upgrade -y
+
+    - name: Install base packages
+      become: yes
+      apt:
+        pkg:
+          - build-essential
+          - automake
+          - autoconf
+          - pkg-config
+          - make
+          - cmake
+          - clang
+          - git
+
+    - name: Setup kernel parameters
+      block:
+        - name: Modify GRUB file
+          become: yes
+          lineinfile:
+            path: /etc/default/grub
+            regexp: '^GRUB_CMDLINE_LINUX='
+            line: 'GRUB_CMDLINE_LINUX="isolcpus={{isolated_cores}} nohz_full={{isolated_cores}} rcu_nocbs={{isolated_cores}} default_hugepagesz=1G hugepagesz=1G hugepages=8 iommu=pt intel_iommu=on"'
+            state: present
+        - name: Update grub
+          become: yes
+          shell: |
+            update-grub2
+
+    - name: Reboot the system
+      become: yes
+      reboot:
+
+    - name: Bring interfaces up
+      become: yes
+      shell: |
+        ip link set up {{ item }}
+      loop: "{{devs}}"

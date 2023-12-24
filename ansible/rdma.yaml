@@ -4,24 +4,10 @@
   gather_subset:
     - "!all"
   tasks:
-    - name: Update packages
-      become: yes
-      shell: |
-        apt update
-        apt upgrade -y
-
     - name: Install RDMA packages
       become: yes
       apt:
         pkg:
-          - build-essential
-          - automake
-          - autoconf
-          - pkg-config
-          - make
-          - cmake
-          - clang
-          - git
           - rdma-core
           - libibverbs1
           - librdmacm1
@@ -40,22 +26,13 @@
           - libnl-route-3-dev
           - libnl-utils
 
-    - name: Reboot the system
-      become: yes
-      reboot:
-
-    - name: Bring interfaces up
-      become: yes
-      shell: |
-        ip link set up {{ item }}
-      loop: "{{devs}}"
-
     - name: Rename IB node descriptors
       become: yes
       shell: |
         hostname -s > /sys/class/infiniband/{{ item }}/node_desc
-      loop: "{{devs}}"
+      loop: "{{ibdevs}}"
 
+    # needed?
     - name: Clone and build the RDMA-core repo
       shell: |
         git clone https://github.com/linux-rdma/rdma-core.git
