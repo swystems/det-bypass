@@ -37,6 +37,23 @@
           shell: |
             update-grub2
 
+    - name: Add /usr/local/lib to ldconfig
+      block:
+        - name: Add /usr/local/lib to ldconfig
+          become: yes
+          # make sure that /etc/ld.so.conf.d/local.conf exists and contains /usr/local/lib, /usr/local/lib64, and /usr/lib64
+          blockinfile:
+            path: /etc/ld.so.conf.d/local.conf
+            block: |
+              /usr/local/lib
+              /usr/local/lib64
+              /usr/lib64
+            state: present
+        - name: Update ldconfig
+          become: yes
+          shell: |
+            ldconfig
+
     - name: Reboot the system
       become: yes
       reboot:

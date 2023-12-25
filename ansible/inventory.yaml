@@ -11,7 +11,7 @@ all:
       devs:
         - ens1f1np1
       ibdevs:
-        - mlx5_0
+        - roceo49
 
   vars:
     ansible_user: mdr

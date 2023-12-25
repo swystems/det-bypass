@@ -1,0 +1,48 @@
+---
+- hosts: all
+  gather_facts: True
+  gather_subset:
+    - "!all"
+  tasks:
+    - name: Install XDP packages
+      become: yes
+      apt:
+        pkg:
+          - libelf-dev
+          - libpcap-dev
+#          - libbpf-dev - libbpf-dev is an older version, best to install from source
+          - gcc-multilib # needed for <asm/types.h>
+    - name: Install libxdp
+      block:
+        - name: Clone xdp-project/xdp-tools
+          git:
+            repo: 'https://github.com/xdp-project/xdp-tools.git'
+            dest: /tmp/xdp-tools
+            version: master
+            force: yes
+        - name: Build and install libxdp
+          shell: |
+            cd /tmp/xdp-tools/
+            ./configure
+            make libxdp
+            make install
+          args:
+            executable: /bin/bash
+          become: yes
+
+    - name: Install libbpf
+      block:
+          - name: Clone libbpf
+            git:
+                repo: 'https://github.com/libbpf/libbpf.git'
+                dest: /tmp/libbpf
+                version: master
+                force: yes
+          - name: Build and install libbpf
+            shell: |
+                cd /tmp/libbpf/src/
+                make
+                make install
+            args:
+                executable: /bin/bash
+            become: yes
