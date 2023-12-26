@@ -5,7 +5,7 @@ all:
       devs:
         - ens1f1np1
       ibdevs:
-        - mlx5_0
+        - roceo49
     xdp2:
       ansible_host: swystems.xdp2
       devs:

@@ -49,6 +49,7 @@
               /usr/local/lib64
               /usr/lib64
             state: present
+            create: yes
         - name: Update ldconfig
           become: yes
           shell: |
@@ -57,9 +58,3 @@
     - name: Reboot the system
       become: yes
       reboot:
-
-    - name: Bring interfaces up
-      become: yes
-      shell: |
-        ip link set up {{ item }}
-      loop: "{{devs}}"
