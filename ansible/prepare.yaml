@@ -37,6 +37,10 @@
           shell: |
             update-grub2
 
+    - name: Reboot the system
+      become: yes
+      reboot:
+
     - name: Add /usr/local/lib to ldconfig
       block:
         - name: Add /usr/local/lib to ldconfig
@@ -54,7 +58,3 @@
           become: yes
           shell: |
             ldconfig
-
-    - name: Reboot the system
-      become: yes
-      reboot:

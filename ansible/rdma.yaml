@@ -26,6 +26,19 @@
           - libnl-route-3-dev
           - libnl-utils
 
+    - name: Add persistent naming to RoCE devices
+      block:
+        - name: Update persistent naming rules file
+          become: yes
+          lineinfile:
+            path: /usr/lib/udev/rules.d/60-rdma-persistent-naming.rules
+            regexp: '^ACTION=="add", SUBSYSTEM=="infiniband"'
+            line: 'ACTION=="add", SUBSYSTEM=="infiniband", PROGRAM="rdma_rename %k NAME_PCI"'
+            state: present
+        - name: Reboot the system
+          become: yes
+          reboot:
+
     - name: Rename IB node descriptors
       become: yes
       shell: |
