@@ -1,14 +1,20 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <linux/perf_event.h>
 #include <linux/if_link.h>
 #include <linux/if_ether.h>
+#include <linux/ip.h>
 #include <net/if.h>
 #include <bpf/libbpf.h>
-#include <bpf/bpf.h>
 #include <unistd.h>
 #include <sys/resource.h>
+#include <sys/mman.h>
+#include <pthread.h>
+#include "common.h"
+#include <arpa/inet.h>
+#include <linux/if_packet.h>
 
 static void update_rlimit(void) {
     struct rlimit r = {RLIM_INFINITY, RLIM_INFINITY};
@@ -31,12 +37,25 @@ void usage(char *prog) {
 }
 
 static const char *filename = "pingpong.o";
-static const char *section = "xdp";
 static const char *prog_name = "xdp_main";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong";
+static const char *mapname = "last_timestamp";
+static struct bpf_object *obj;
 
-void start_pingpong(int ifindex, int num_pkts) {
-    struct bpf_object *obj = bpf_object__open_file(filename, NULL);
+static struct pingpong_payload *payloads;
+static int iters = 0;
+
+/**
+ * Attach the XDP program to the given interface.
+ *
+ * The XDP program defined by `filename` and `prog_name` is loaded and attached to the interface in "driver" mode.
+ * After being loaded, the program is also pinned to the BPF filesystem.
+ *
+ * @param ifindex The interface index to attach the program to. If an interface with this index does not exist, the
+ * function will fail and the program will exit.
+ */
+void attach_xdp(int ifindex) {
+    obj = bpf_object__open_file(filename, NULL);
     if (!obj) {
         fprintf(stderr, "ERR: opening file failed\n");
         perror("bpf_object__open_file");
@@ -71,8 +90,100 @@ void start_pingpong(int ifindex, int num_pkts) {
     printf("Program attached to interface %d\n", ifindex);
 }
 
+/**
+ * Continuously poll the XDP map for the latest pingpong_payload value and print it.
+ */
+void *poll_thread(void* aux __attribute__((unused))) {
+    int map_fd = bpf_object__find_map_fd_by_name(obj, mapname);
+    if (map_fd < 0) {
+        fprintf(stderr, "ERR: finding map failed\n");
+        return NULL;
+    }
+
+    void *map = mmap(NULL, sizeof(struct pingpong_payload), PROT_READ, MAP_SHARED, map_fd, 0);
+    if (map == MAP_FAILED) {
+        fprintf(stderr, "ERR: mmap failed\n");
+        return NULL;
+    }
+
+    uint32_t last_id = 0;
+    struct pingpong_payload *payload = map;
+    while (payload->id < iters - 1) {
+        printf("ID %d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2],
+               payload->ts[3]);
+        last_id = payload->id;
+
+        // busy_wait
+        while (payload->id == last_id) {}
+    }
+
+    munmap(map, sizeof(struct pingpong_payload));
+
+    printf("Poll thread finished\n");
+    return NULL;
+}
+
+pthread_t start_poll_thread(void) {
+    // Create and start a thread with poll_thread function
+    pthread_t thread;
+    pthread_create(&thread, NULL, poll_thread, NULL);
+    return thread;
+}
+
+void send_packets(int ifindex, const char *server_ip) {
+    // send a raw packet to server_ip containing an Ethernet header with type 0x2002 and empty addresses, an IP header
+    // with the given server_ip as destination and a pingpong_payload with phase 0 and id 0
+
+    // create a raw socket
+    int sock = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (sock < 0) {
+        perror("socket");
+        return;
+    }
+
+    // create a sockaddr_ll struct with the interface index
+    struct sockaddr_ll addr = {.sll_family = AF_PACKET, .sll_ifindex = ifindex, .sll_halen = ETH_ALEN,};
+
+    // create an Ethernet header with type 0x2002 and empty addresses
+    struct ethhdr eth = {.h_proto = htons(0x2002),};
+
+    // create an IP header with the given server_ip as destination
+    struct iphdr ip = {.version = 4, .ihl = 5, .ttl = 64, .protocol = IPPROTO_UDP, .daddr = inet_addr(server_ip),};
+
+    // create a pingpong_payload with phase 0 and id 0
+    struct pingpong_payload payload = {.phase = 0, .id = 0,};
+
+    // create a buffer containing the Ethernet header, the IP header and the pingpong_payload
+    char buf[PACKET_SIZE];
+    memcpy(buf, &eth, sizeof(eth));
+    memcpy(buf + sizeof(eth), &ip, sizeof(ip));
+    memcpy(buf + sizeof(eth) + sizeof(ip), &payload, sizeof(payload));
+
+    // send the buffer to the server
+    int ret = sendto(sock, buf, sizeof(buf), 0, (struct sockaddr *) &addr, sizeof(addr));
+    if (ret < 0) {
+        perror("sendto");
+        return;
+    }
+
+    // close the socket
+    close(sock);
+}
+
+void start_pingpong(int ifindex, const char *server_ip) {
+    attach_xdp(ifindex);
+    bool is_server = server_ip == NULL;
+    if (is_server) return; // the server does not need to do anything packet-wise, it just needs to echo using XDP_TX
+
+    const pthread_t thread = start_poll_thread();
+
+    send_packets(ifindex, server_ip);
+
+    pthread_join(thread, NULL);
+}
+
 int remove_pingpong(int ifindex) {
-    struct bpf_object *obj = bpf_object__open_file(filename, NULL);
+    obj = bpf_object__open_file(filename, NULL);
     if (!obj) {
         fprintf(stderr, "ERR: opening file failed\n");
         return EXIT_FAILURE;
@@ -123,8 +234,16 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(action, "start") == 0) {
-        int num_pkts = atoi(argv[3]);
-        start_pingpong(ifindex, num_pkts);
+        iters = atoi(argv[3]);
+        char *ip = argc > 4 ? argv[4] : NULL;
+
+        payloads = calloc(iters, PACKET_SIZE);
+        if (!payloads) {
+            perror("malloc");
+            return EXIT_FAILURE;
+        }
+
+        start_pingpong(ifindex, ip);
     } else if (strcmp(action, "remove") == 0) {
         remove_pingpong(ifindex);
     } else {
