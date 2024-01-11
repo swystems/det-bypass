@@ -36,22 +36,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum ibv_mtu
-pp_mtu_to_enum (int mtu)
+enum ibv_mtu pp_mtu_to_enum (int mtu)
 {
     switch (mtu)
     {
-    case 256: return IBV_MTU_256;
-    case 512: return IBV_MTU_512;
-    case 1024: return IBV_MTU_1024;
-    case 2048: return IBV_MTU_2048;
-    case 4096: return IBV_MTU_4096;
-    default: return 0;
+    case 256:
+        return IBV_MTU_256;
+    case 512:
+        return IBV_MTU_512;
+    case 1024:
+        return IBV_MTU_1024;
+    case 2048:
+        return IBV_MTU_2048;
+    case 4096:
+        return IBV_MTU_4096;
+    default:
+        return 0;
     }
 }
 
-int pp_get_port_info (struct ibv_context *context, int port,
-                      struct ibv_port_attr *attr)
+int pp_get_port_info (struct ibv_context *context, int port, struct ibv_port_attr *attr)
 {
     return ibv_query_port (context, port, attr);
 }
@@ -186,7 +190,8 @@ void save_payloads_to_file (struct pingpong_data *data, unsigned int warmup, con
 
     for (unsigned int i = warmup; i < data->num_payloads; i++)
     {
-        fprintf (fp, "%lu\t%lu\t%lu\t%lu\n", data->payloads[i].ts[0], data->payloads[i].ts[1], data->payloads[i].ts[2], data->payloads[i].ts[3]);
+        fprintf (fp, "%lu\t%lu\t%lu\t%lu\n", data->payloads[i].ts[0], data->payloads[i].ts[1], data->payloads[i].ts[2],
+                 data->payloads[i].ts[3]);
     }
 
     fclose (fp);

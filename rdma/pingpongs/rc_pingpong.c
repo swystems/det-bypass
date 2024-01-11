@@ -206,7 +206,7 @@ pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, enum ibv_mtu 
     if (ibv_modify_qp(ctx->qp, &attr, IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
                                       IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER)) {
         fprintf(stderr, "Failed to modify QP to RTR\n");
-        return ret;
+        return 1;
     }
 
     attr.qp_state = IBV_QPS_RTS;
