@@ -1,7 +1,9 @@
 # RDMA pingpongs
 
 This directory contains a set of RDMA pingpong tests from
-the [rdma-core](https://github.com/linux-rdma/rdma-core/tree/master/libibverbs/examples) repository.
+the [rdma-core](https://github.com/linux-rdma/rdma-core/tree/master/libibverbs/examples) repository. Credits to the original authors.
+
+The original code was modified to allow storing the timestamp of each packet exchanged during the pingpong.
 
 ## Available programs
 
