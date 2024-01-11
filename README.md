@@ -6,7 +6,7 @@ Research on temporal determinism (stability) of current OS bypass methods
 Tools:
 - RDMA
 - DPDK
-- eBPF XDP
+- eBPF XDP (to app: map polling, socket)
 
 timeframes:
 - packet numbers: 10k,1mil, more
