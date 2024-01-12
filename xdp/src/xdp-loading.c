@@ -70,6 +70,19 @@ int detach_xdp (struct bpf_object *obj, const char *prog_name, int ifindex, cons
             PERROR ("bpf_program__unpin");
             return -1;
         }
+
+        // try to unpin all the maps of the program
+        struct bpf_map *map;
+        bpf_object__for_each_map (map, obj)
+        {
+            char map_pinpath[12 + strlen (bpf_map__name (map)) + 1];// "/sys/fs/bpf/" + map_name + '\0'
+            snprintf (map_pinpath, sizeof (map_pinpath), "/sys/fs/bpf/%s", bpf_map__name (map));
+            ret = bpf_map__unpin (map, map_pinpath);
+            if (ret)
+            {
+                PERROR ("bpf_map__unpin");
+            }
+        }
     }
 
     ret = bpf_xdp_detach (ifindex, XDP_FLAGS_DRV_MODE, 0);
