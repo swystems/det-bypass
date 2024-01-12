@@ -18,33 +18,39 @@ void usage (char *prog)
     fprintf (stderr, "\t- remove: remove XDP program\n");
 }
 
+// Information about the XDP program
 static const char *filename = "pingpong.o";
 static const char *prog_name = "xdp_main";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong";
 static const char *mapname = "last_timestamp";
 
-static unsigned int iters = 0;
-
+// global variable to store the loaded xdp object
 static struct bpf_object *loaded_xdp_obj;
+
+// whether the polling thread is ready
 volatile bool is_polling = false;
 
 /**
  * Continuously poll the XDP map for the latest pingpong_payload value and print it.
+ * @param iters_ptr a pointer to the number of iterations to poll for. The ownership of this pointer is transferred to
+ *                 the thread. The thread is responsible for freeing it.
  */
-void *poll_thread (void *aux __attribute__ ((unused)))
+void *poll_thread (void *iters_ptr)
 {
+    const uint32_t iters = *(uint32_t *) iters_ptr;
+
     int map_fd = bpf_object__find_map_fd_by_name (loaded_xdp_obj, mapname);
     if (map_fd < 0)
     {
         fprintf (stderr, "ERR: finding map failed\n");
-        return NULL;
+        goto exit;
     }
 
     void *map = mmap (NULL, sizeof (struct pingpong_payload), PROT_READ, MAP_SHARED, map_fd, 0);
     if (map == MAP_FAILED)
     {
         fprintf (stderr, "ERR: mmap failed\n");
-        return NULL;
+        goto exit;
     }
 
     // notify the program that the polling thread is ready
@@ -67,23 +73,32 @@ void *poll_thread (void *aux __attribute__ ((unused)))
     munmap (map, sizeof (struct pingpong_payload));
 
     printf ("Poll thread finished\n");
+
+exit:
+    free (iters_ptr);
     return NULL;
 }
 
-pthread_t start_poll_thread (void)
+pthread_t start_poll_thread (const uint32_t iters)
 {
+    // Allocate iters on the heap :( ugly
+    int *iters_ptr = malloc (sizeof (int));
+    *iters_ptr = iters;
+
     // Create and start a thread with poll_thread function
     pthread_t thread;
-    pthread_create (&thread, NULL, poll_thread, NULL);
+    pthread_create (&thread, NULL, poll_thread, iters_ptr);
 
     BUSY_WAIT (!is_polling);
 
     return thread;
 }
 
-void start_pingpong (int ifindex, const char *server_ip)
+void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 {
-    const pthread_t thread = start_poll_thread ();
+    const pthread_t thread = start_poll_thread (iters);
+
+    sleep (1);// just some time to make sure the polling thread is ready
 
     send_packets (ifindex, server_ip, iters, 20000);
 
@@ -155,10 +170,10 @@ int main (int argc, char **argv)
             return EXIT_FAILURE;
         }
 
-        iters = atoi (argv[3]);
+        const int iters = atoi (argv[3]);
         char *ip = argv[4];
 
-        start_pingpong (ifindex, ip);
+        start_pingpong (ifindex, ip, iters);
     }
     else if (strcmp (action, "remove") == 0)
     {
