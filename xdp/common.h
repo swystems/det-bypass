@@ -12,6 +12,23 @@
         }                                    \
     } while (0)
 
+#if DEBUG
+#define LOG(stream, fmt, ...)                 \
+    do                                        \
+    {                                         \
+        fprintf (stream, fmt, ##__VA_ARGS__); \
+    } while (0)
+
+#define PERROR(errno)   \
+    do                  \
+    {                   \
+        perror (errno); \
+    } while (0)
+#else
+#define LOG(stream, fmt, ...)
+#define PERROR(errno)
+#endif
+
 #define PACKET_SIZE 1024
 
 struct pingpong_payload {

@@ -223,14 +223,15 @@ int main (int argc, char **argv)
 
     if (strcmp (action, "start") == 0)
     {
-        detach_pingpong_xdp (ifindex);
+        detach_pingpong_xdp (ifindex);// always try to detach first
+
         int ret = attach_pingpong_xdp (ifindex);
-        printf ("XDP program attached\n");
         if (ret)
         {
             fprintf (stderr, "ERR: attaching program failed\n");
             return EXIT_FAILURE;
         }
+        printf ("XDP program attached\n");
 
         if (argc == 3)
         {
@@ -239,12 +240,13 @@ int main (int argc, char **argv)
         }
         else if (argc < 5)
         {
+            // if it's not 3, it must be at least 5
             usage (argv[0]);
             return EXIT_FAILURE;
         }
 
         iters = atoi (argv[3]);
-        char *ip = argc > 4 ? argv[4] : NULL;
+        char *ip = argv[4];
 
         payloads = calloc (iters, sizeof (struct pingpong_payload));
         if (!payloads)
