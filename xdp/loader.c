@@ -4,14 +4,10 @@
 #include <linux/if_ether.h>
 #include <linux/if_link.h>
 #include <linux/if_packet.h>
-#include <linux/ip.h>
-#include <linux/perf_event.h>
 #include <net/if.h>
 #include <pthread.h>
 #include <stdbool.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <unistd.h>
@@ -209,59 +205,52 @@ pthread_t start_poll_thread (void)
 
 void send_packets (int ifindex, const char *server_ip)
 {
-    // send a raw packet to server_ip containing an Ethernet header with type 0x2002 and empty addresses, an IP header
-    // with the given server_ip as destination and a pingpong_payload with phase 0 and id 0
+    char src_mac[ETH_ALEN] = {0x9c, 0xdc, 0x71, 0x5d, 0xf1, 0x11};
+    char dest_mac[ETH_ALEN] = {0x9c, 0xdc, 0x71, 0x5d, 0xa0, 0x21};
 
-    // create a raw socket
-    int sock = socket (AF_PACKET, SOCK_RAW, htons (ETH_P_ALL));
+    const uint32_t src_ip = inet_addr ("10.10.1.2");
+    const uint32_t dest_ip = inet_addr (server_ip);
+
+    int sock = socket (AF_PACKET, SOCK_RAW, IPPROTO_RAW);
     if (sock < 0)
     {
         perror ("socket");
         return;
     }
 
-    // create a sockaddr_ll struct with the interface index
-    struct sockaddr_ll addr = {
-        .sll_family = AF_PACKET,
-        .sll_ifindex = ifindex,
-        .sll_halen = ETH_ALEN,
-    };
-
-    // create an Ethernet header with type 0x2002 and empty addresses
-    struct ethhdr eth = {
-        .h_proto = htons (0x2002),
-    };
-
-    // create an IP header with the given server_ip as destination
-    struct iphdr ip = {
-        .version = 4,
-        .ihl = 5,
-        .ttl = 64,
-        .protocol = IPPROTO_UDP,
-        .daddr = inet_addr (server_ip),
-    };
-
-    // create a pingpong_payload with phase 0 and id 0
-    struct pingpong_payload payload = {
-        .phase = 0,
-        .id = 0,
-    };
-
-    // create a buffer containing the Ethernet header, the IP header and the pingpong_payload
     char buf[PACKET_SIZE];
-    memcpy (buf, &eth, sizeof (eth));
-    memcpy (buf + sizeof (eth), &ip, sizeof (ip));
-    memcpy (buf + sizeof (eth) + sizeof (ip), &payload, sizeof (payload));
+    memset (buf, 0, PACKET_SIZE);
 
-    // send the buffer to the server
-    int ret = sendto (sock, buf, sizeof (buf), 0, (struct sockaddr *) &addr, sizeof (addr));
-    if (ret < 0)
+    // Ethernet header
+    struct ethhdr *eth = (struct ethhdr *) buf;
+    for (int i = 0; i < ETH_ALEN; ++i)
     {
-        perror ("sendto");
-        return;
+        eth->h_source[i] = src_mac[i];
+        eth->h_dest[i] = dest_mac[i];
+    }
+    eth->h_proto = htons (ETH_P_IP);
+
+    struct sockaddr_ll sock_addr;
+    sock_addr.sll_ifindex = ifindex;
+    sock_addr.sll_halen = ETH_ALEN;
+    for (int i = 0; i < ETH_ALEN; ++i)
+        sock_addr.sll_addr[i] = dest_mac[i];
+
+    for (int i = 0; i < iters; ++i)
+    {
+        struct pingpong_payload *payload = (struct pingpong_payload *) (eth + 1);
+        payload->id = i;
+        payload->phase = 0;
+        payload->ts[0] = get_time_ns ();
+
+        int ret = sendto (sock, buf, PACKET_SIZE, 0, (struct sockaddr *) &sock_addr, sizeof (struct sockaddr_ll));
+        if (ret < 0)
+        {
+            perror ("sendto");
+            return;
+        }
     }
 
-    // close the socket
     close (sock);
 }
 
@@ -282,45 +271,6 @@ void start_pingpong (int ifindex, const char *server_ip)
     send_packets (ifindex, server_ip);
 
     pthread_join (thread, NULL);
-}
-
-int remove_pingpong (int ifindex)
-{
-    obj = bpf_object__open_file (filename, NULL);
-    if (!obj)
-    {
-        fprintf (stderr, "ERR: opening file failed\n");
-        return EXIT_FAILURE;
-    }
-
-    int ret = bpf_object__load (obj);
-    if (ret)
-    {
-        fprintf (stderr, "ERR: loading file failed\n");
-        return EXIT_FAILURE;
-    }
-
-    struct bpf_program *prog = bpf_object__find_program_by_name (obj, prog_name);
-    if (!prog)
-    {
-        fprintf (stderr, "ERR: finding program failed\n");
-        return EXIT_FAILURE;
-    }
-
-    ret = bpf_program__unpin (prog, pinpath);// ret can be ignored, if unpin fails, it's not a big deal
-
-    ret = bpf_xdp_detach (ifindex, XDP_FLAGS_DRV_MODE, 0);
-    if (ret)
-    {
-        fprintf (stderr, "ERR: detaching program failed\n");
-        return EXIT_FAILURE;
-    }
-
-    bpf_program__unload (prog);
-
-    printf ("Program detached from interface %d\n", ifindex);
-
-    return EXIT_SUCCESS;
 }
 
 int main (int argc, char **argv)
