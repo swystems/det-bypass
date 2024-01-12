@@ -48,6 +48,59 @@ static struct bpf_object *obj;
 static struct pingpong_payload *payloads;
 static int iters = 0;
 
+long long get_time_ns (void)
+{
+    struct timespec t;
+    clock_gettime (CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+
+/**
+ * Remove the XDP program from the given interface.
+ *
+ * @param ifindex The interface index to remove the program from. If an interface with this index does not exist, the
+ * function will fail and the program will exit.
+ * @return EXIT_SUCCESS if the program was successfully removed, EXIT_FAILURE otherwise.
+ */
+int remove_pingpong (int ifindex)
+{
+    obj = bpf_object__open_file (filename, NULL);
+    if (!obj)
+    {
+        fprintf (stderr, "ERR: opening file failed\n");
+        return EXIT_FAILURE;
+    }
+
+    int ret = bpf_object__load (obj);
+    if (ret)
+    {
+        fprintf (stderr, "ERR: loading file failed\n");
+        return EXIT_FAILURE;
+    }
+
+    struct bpf_program *prog = bpf_object__find_program_by_name (obj, prog_name);
+    if (!prog)
+    {
+        fprintf (stderr, "ERR: finding program failed\n");
+        return EXIT_FAILURE;
+    }
+
+    ret = bpf_program__unpin (prog, pinpath);// ret can be ignored, if unpin fails, it's not a big deal
+
+    ret = bpf_xdp_detach (ifindex, XDP_FLAGS_DRV_MODE, 0);
+    if (ret)
+    {
+        fprintf (stderr, "ERR: detaching program failed\n");
+        return EXIT_FAILURE;
+    }
+
+    bpf_program__unload (prog);
+
+    printf ("Program detached from interface %d\n", ifindex);
+
+    return EXIT_SUCCESS;
+}
+
 /**
  * Attach the XDP program to the given interface.
  *
@@ -57,14 +110,14 @@ static int iters = 0;
  * @param ifindex The interface index to attach the program to. If an interface with this index does not exist, the
  * function will fail and the program will exit.
  */
-void attach_xdp (int ifindex)
+int attach_xdp (int ifindex, bool retry)
 {
     obj = bpf_object__open_file (filename, NULL);
     if (!obj)
     {
         fprintf (stderr, "ERR: opening file failed\n");
         perror ("bpf_object__open_file");
-        return;
+        return EXIT_FAILURE;
     }
 
     int ret = bpf_object__load (obj);
@@ -72,30 +125,41 @@ void attach_xdp (int ifindex)
     {
         fprintf (stderr, "ERR: loading file failed\n");
         perror ("bpf_object__load");
-        return;
+        return EXIT_FAILURE;
     }
 
     struct bpf_program *prog = bpf_object__find_program_by_name (obj, prog_name);
     if (!prog)
     {
         fprintf (stderr, "ERR: finding program failed\n");
-        return;
+        return EXIT_FAILURE;
     }
 
     ret = bpf_program__pin (prog, pinpath);
     if (ret)
     {
-        fprintf (stderr, "ERR: pinning program failed\n");
-        return;
+        // try to remove the pingpong only if it's the first time doing so.
+        if (!retry)
+            ret = remove_pingpong (ifindex);
+        // if we had already done this, stop to avoid infinite recursion
+        // if there was an error removing the program, we can't do anything about it and exit
+        if (retry || ret)
+        {
+            fprintf (stderr, "ERR: pinning program failed\n");
+            return EXIT_FAILURE;
+        }
+        return attach_xdp (ifindex, true);
     }
 
     ret = bpf_xdp_attach (ifindex, bpf_program__fd (prog), XDP_FLAGS_UPDATE_IF_NOEXIST | XDP_FLAGS_DRV_MODE, 0);
     if (ret)
     {
         fprintf (stderr, "ERR: attaching program failed\n");
-        return;
+        return EXIT_FAILURE;
     }
     printf ("Program attached to interface %d\n", ifindex);
+
+    return EXIT_SUCCESS;
 }
 
 /**
@@ -203,7 +267,12 @@ void send_packets (int ifindex, const char *server_ip)
 
 void start_pingpong (int ifindex, const char *server_ip)
 {
-    attach_xdp (ifindex);
+    int ret = attach_xdp (ifindex, false);
+    if (ret)
+    {
+        fprintf (stderr, "ERR: attaching program failed\n");
+        return;
+    }
     bool is_server = server_ip == NULL;
     if (is_server)
         return;// the server does not need to do anything packet-wise, it just needs to echo using XDP_TX
