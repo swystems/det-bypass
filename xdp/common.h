@@ -1,6 +1,8 @@
 #pragma once
 
-#define PACKET_SIZE 2048
+#include <linux/types.h>
+
+#define PACKET_SIZE 1024
 
 struct pingpong_payload {
     __u16 phase;
