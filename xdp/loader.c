@@ -4,6 +4,7 @@
 #include <linux/if_ether.h>
 #include <linux/if_link.h>
 #include <linux/if_packet.h>
+#include <linux/ip.h>
 #include <net/if.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -11,6 +12,15 @@
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <unistd.h>
+
+#define BUSY_WAIT(condition)                 \
+    do                                       \
+    {                                        \
+        while (condition)                    \
+        {                                    \
+            __asm__ __volatile__ ("pause;"); \
+        }                                    \
+    } while (0)
 
 static void update_rlimit (void)
 {
@@ -29,10 +39,10 @@ void usage (char *prog)
 {
     // <prog> <ifname> <action>
     fprintf (stderr, "Usage: %s <ifname> <action> [extra arguments]\n", prog);
-    fprintf (stderr, "action:\n");
-    fprintf (stderr, "  start: load, attach, pin and start recording pingpong\n");
-    fprintf (stderr, "         requires an extra argument: <num of packets>\n");
-    fprintf (stderr, "  remove: remove pinned program\n");
+    fprintf (stderr, "Actions:\n");
+    fprintf (stderr, "\t- start: start the pingpong experiment\n");
+    fprintf (stderr, "\t         only on the client machine, it requires two extra arguments: <number of packets> <server IP>\n");
+    fprintf (stderr, "\t- remove: remove XDP program\n");
 }
 
 static const char *filename = "pingpong.o";
@@ -158,6 +168,8 @@ int attach_xdp (int ifindex, bool retry)
     return EXIT_SUCCESS;
 }
 
+volatile bool is_polling = false;
+
 /**
  * Continuously poll the XDP map for the latest pingpong_payload value and print it.
  */
@@ -177,16 +189,19 @@ void *poll_thread (void *aux __attribute__ ((unused)))
         return NULL;
     }
 
+    // notify the program that the polling thread is ready
+    is_polling = true;
+
     uint32_t last_id = 0;
     struct pingpong_payload *payload = map;
-    while (payload->id < iters - 1)
+    while (payload->id < iters)
     {
         printf ("ID %d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2],
                 payload->ts[3]);
         last_id = payload->id;
 
-        // busy_wait
-        while (payload->id == last_id) {}
+        // wait until we get a new packet
+        BUSY_WAIT (payload->id == last_id);
     }
 
     munmap (map, sizeof (struct pingpong_payload));
@@ -200,15 +215,18 @@ pthread_t start_poll_thread (void)
     // Create and start a thread with poll_thread function
     pthread_t thread;
     pthread_create (&thread, NULL, poll_thread, NULL);
+
+    BUSY_WAIT (!is_polling);
+
     return thread;
 }
 
 void send_packets (int ifindex, const char *server_ip)
 {
-    char src_mac[ETH_ALEN] = {0x9c, 0xdc, 0x71, 0x5d, 0xf1, 0x11};
-    char dest_mac[ETH_ALEN] = {0x9c, 0xdc, 0x71, 0x5d, 0xa0, 0x21};
+    char src_mac[ETH_ALEN] = {0x9c, 0xdc, 0x71, 0x5d, 0x51, 0x31};
+    char dest_mac[ETH_ALEN] = {0x9c, 0xdc, 0x71, 0x5d, 0xd5, 0xf1};
 
-    const uint32_t src_ip = inet_addr ("10.10.1.2");
+    //    const uint32_t src_ip = inet_addr ("10.10.1.2");
     const uint32_t dest_ip = inet_addr (server_ip);
 
     int sock = socket (AF_PACKET, SOCK_RAW, IPPROTO_RAW);
@@ -228,7 +246,20 @@ void send_packets (int ifindex, const char *server_ip)
         eth->h_source[i] = src_mac[i];
         eth->h_dest[i] = dest_mac[i];
     }
-    eth->h_proto = htons (ETH_P_IP);
+    eth->h_proto = __constant_htons (0x2002);
+
+    struct iphdr *ip = (struct iphdr *) (eth + 1);
+    ip->ihl = 5;
+    ip->version = 4;
+    ip->tos = 0;
+    ip->tot_len = htons (PACKET_SIZE - sizeof (struct ethhdr));
+    ip->id = htons (0);
+    ip->frag_off = htons (0);
+    ip->ttl = 64;
+    ip->protocol = IPPROTO_RAW;
+    ip->check = 0;
+    //    ip->saddr = src_ip;
+    ip->daddr = dest_ip;
 
     struct sockaddr_ll sock_addr;
     sock_addr.sll_ifindex = ifindex;
@@ -238,7 +269,9 @@ void send_packets (int ifindex, const char *server_ip)
 
     for (int i = 0; i < iters; ++i)
     {
-        struct pingpong_payload *payload = (struct pingpong_payload *) (eth + 1);
+        ip->id = htons (i);
+
+        struct pingpong_payload *payload = (struct pingpong_payload *) (ip + 1);
         payload->id = i;
         payload->phase = 0;
         payload->ts[0] = get_time_ns ();
@@ -249,6 +282,9 @@ void send_packets (int ifindex, const char *server_ip)
             perror ("sendto");
             return;
         }
+
+        long long start = get_time_ns ();
+        BUSY_WAIT (get_time_ns () - start < 20000);
     }
 
     close (sock);
@@ -298,7 +334,7 @@ int main (int argc, char **argv)
         iters = atoi (argv[3]);
         char *ip = argc > 4 ? argv[4] : NULL;
 
-        payloads = calloc (iters, PACKET_SIZE);
+        payloads = calloc (iters, sizeof (struct pingpong_payload));
         if (!payloads)
         {
             perror ("malloc");

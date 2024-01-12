@@ -16,6 +16,7 @@ struct {
     __type (key, __u32);
     __type (value, struct pingpong_payload);
     __uint (max_entries, 1);
+    __uint (pinning, LIBBPF_PIN_BY_NAME);
 } last_timestamp
     SEC (".maps");
 
@@ -28,12 +29,14 @@ int xdp_main (struct xdp_md *ctx)
 
     // custom packet: Ethernet + IP + pingpong_payload; size is always PACKET_SIZE bytes (defined in common.h)
     // what identifies the pingpong packet is the custom ETH type 0x2002
+    bpf_printk ("Received packet!");
     if (data_start + sizeof (struct ethhdr) + sizeof (struct iphdr) + sizeof (struct pingpong_payload) > data_end)
     {
         return XDP_PASS;
     }
 
     struct ethhdr *eth = data_start;
+    bpf_printk ("Received packet! Ethernet protocol: %d\n", eth->h_proto);
     if (eth->h_proto != __constant_htons (0x2002))
     {
         return XDP_PASS;
@@ -41,6 +44,8 @@ int xdp_main (struct xdp_md *ctx)
 
     struct pingpong_payload *payload = data_start + sizeof (struct ethhdr) + sizeof (struct iphdr);
     __u8 phase = payload->phase;
+
+    bpf_printk ("Received packet with ID %d\n", payload->id);
 
     /**
      * Phase 0: I am the server and just received a packet sent from the client
@@ -50,6 +55,18 @@ int xdp_main (struct xdp_md *ctx)
     {
         // Server
         payload->ts[1] = receive_ts;
+
+        // print eth source
+        bpf_printk ("Source MAC address:");
+        for (int i = 0; i < ETH_ALEN; ++i)
+            bpf_printk ("%x", eth->h_source[i]);
+        bpf_printk ("\n");
+
+        // print eth dest
+        bpf_printk ("Dest MAC address:");
+        for (int i = 0; i < ETH_ALEN; ++i)
+            bpf_printk ("%x", eth->h_dest[i]);
+        bpf_printk ("\n");
 
         // swap source and destination MAC addresses
         __u8 tmp[ETH_ALEN];
