@@ -1,12 +1,10 @@
 #include "common.h"
 #include "src/net.h"
+#include "src/persistence.h"
 #include "src/xdp-loading.h"
 
-#include <bpf/libbpf.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 
 void usage (char *prog)
 {
@@ -39,6 +37,9 @@ inline struct pingpong_payload poll_next_payload (void *map_ptr)
 void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 {
     LOG (stdout, "Starting pingpong experiment...\n");
+
+    persistence_init ("pingpong.dat");
+
     // "src" and "dest" are from the point of view of the client
     // if I am the server, they must be swapped
     const uint8_t client_mac[ETH_ALEN] = {0x0c, 0x42, 0xa1, 0xdd, 0x60, 0xb0};
@@ -108,6 +109,9 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
                 perror ("sendto");
                 return;
             }
+
+            if (current_id >= iters - 1)
+                break;
         }
         else
         {
@@ -137,12 +141,23 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
             }
 
             payload.ts[3] = get_time_ns ();
-            printf ("Packet %d: %llu %llu %llu %llu\n", payload.id, payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3]);
+
+            char output_str[100];
+            snprintf (output_str, 100, "%llu %llu %llu %llu\n", payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3]);
+
+            persistence_write ((uint8_t *) output_str, strlen (output_str));
 
             ++current_id;
             usleep (20);
         }
     }
+
+    LOG (stdout, "Pingpong experiment finished\n");
+    close (sock);
+    munmap (map_ptr, sizeof (struct pingpong_payload));
+    persistence_close ();
+
+    return;
 }
 
 int attach_pingpong_xdp (int ifindex)
