@@ -32,7 +32,7 @@ int persistence_write (const struct pingpong_payload *payload)
     }
 
     // print the paylaod id to file
-    if (fprintf (persistence_file, "%d\n", payload->id) < 0)
+    if (fprintf (persistence_file, "%d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]) < 0)
     {
         LOG (stderr, "ERROR: Could not write to persistence file\n");
         return -1;

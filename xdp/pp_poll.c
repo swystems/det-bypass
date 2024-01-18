@@ -22,6 +22,8 @@ static const char *prog_name = "xdp_main";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong";
 static const char *mapname = "last_payload";
 
+static const char *outfile = "pingpong.dat";
+
 // global variable to store the loaded xdp object
 static struct bpf_object *loaded_xdp_obj;
 
@@ -36,23 +38,22 @@ inline struct pingpong_payload poll_next_payload (void *map_ptr)
 
 void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 {
-    LOG (stdout, "Starting pingpong experiment...\n");
+    printf ("Starting pingpong\n");
 
-    persistence_init ("pingpong.dat");
-
-    // "src" and "dest" are from the point of view of the client
-    // if I am the server, they must be swapped
-    const uint8_t client_mac[ETH_ALEN] = {0x0c, 0x42, 0xa1, 0xdd, 0x60, 0xb0};
-    const uint8_t server_mac[ETH_ALEN] = {0x0c, 0x42, 0xa1, 0xe2, 0xa6, 0xa8};
-
-    const char *client_ip = "10.10.1.1";
+    persistence_init (outfile);
 
     bool is_server = server_ip == NULL;// if no server_ip is provided, I must be the server
 
-    const uint8_t *src_mac = is_server ? server_mac : client_mac;
-    const uint8_t *dest_mac = is_server ? client_mac : server_mac;
-    const char *src_ip = is_server ? "10.10.1.2" : client_ip;
-    const char *dest_ip = is_server ? client_ip : server_ip;
+    uint8_t src_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    uint8_t dest_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    uint32_t src_ip = 0;
+    uint32_t dest_ip = 0;
+    int ret = exchange_addresses (ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
+    if (ret < 0)
+    {
+        fprintf (stderr, "ERR: exchange_addresses failed\n");
+        return;
+    }
 
     void *map_ptr = mmap_bpf_map (loaded_xdp_obj, mapname, sizeof (struct pingpong_payload));
     if (!map_ptr)
@@ -71,7 +72,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
     char buf[PACKET_SIZE];
     memset (buf, 0, PACKET_SIZE);
 
-    int ret = build_base_packet (buf, src_mac, dest_mac, src_ip, dest_ip);
+    ret = build_base_packet (buf, src_mac, dest_mac, src_ip, dest_ip);
     if (ret < 0)
         return;
 

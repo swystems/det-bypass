@@ -19,7 +19,7 @@ endif()
 add_definitions(-DDEBUG=${DEBUG})
 
 file(GLOB SOURCES src/*.c)
-add_executable(loader ${SOURCES} loader.c)
+add_executable(pp_poll ${SOURCES} pp_poll.c)
 
-# add xdp-loading.c xdp-loading.h as dependency of loader
-add_dependencies(loader pingpong)
+# add xdp-loading.c xdp-loading.h as dependency of pp_poll
+add_dependencies(pp_poll pingpong)

@@ -30,8 +30,179 @@ int convert_ip (const char *ip, uint32_t *ip_addr)
     return 0;
 }
 
+int retrieve_local_ip (int ifindex, uint32_t *out_addr)
+{
+    char ifname[IF_NAMESIZE];
+    if (if_indextoname (ifindex, ifname) == NULL)
+    {
+        PERROR ("if_indextoname");
+        return -1;
+    }
+
+    int sock = socket (AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        PERROR ("socket");
+        return -1;
+    }
+
+    struct ifreq ifr;
+    memset (&ifr, 0, sizeof (struct ifreq));
+    strncpy (ifr.ifr_name, ifname, IF_NAMESIZE);
+
+    int ret = ioctl (sock, SIOCGIFADDR, &ifr);
+    if (ret < 0)
+    {
+        PERROR ("ioctl");
+        return -1;
+    }
+
+    close (sock);
+
+    struct sockaddr_in *addr = (struct sockaddr_in *) &ifr.ifr_addr;
+    *out_addr = addr->sin_addr.s_addr;
+    return 0;
+}
+
+int retrieve_local_mac (int ifindex, uint8_t *out_mac)
+{
+    char ifname[IF_NAMESIZE + 1];
+    if (if_indextoname (ifindex, ifname) == NULL)
+    {
+        PERROR ("if_indextoname");
+        return -1;
+    }
+
+    // read /sys/class/net/<ifname>/address
+    char path[192];
+    snprintf (path, 192, "/sys/class/net/%s/address", ifname);
+    FILE *f = fopen (path, "r");
+    if (!f)
+    {
+        PERROR ("fopen");
+        return -1;
+    }
+
+    char mac_str[18];
+    if (fgets (mac_str, 18, f) == NULL)
+    {
+        PERROR ("fgets");
+        return -1;
+    }
+
+    if (fclose (f) != 0)
+    {
+        PERROR ("fclose");
+        return -1;
+    }
+
+    int ret = sscanf (mac_str, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &out_mac[0], &out_mac[1], &out_mac[2], &out_mac[3], &out_mac[4], &out_mac[5]);
+    if (ret != 6)
+    {
+        PERROR ("sscanf");
+        return -1;
+    }
+
+    return 0;
+}
+
+int exchange_addresses (const int ifindex, const char *server_ip, bool is_server,
+                        uint8_t *src_mac, uint8_t *dest_mac,
+                        uint32_t *src_ip, uint32_t *dest_ip)
+{
+    LOG (stdout, "Starting exchange of addresses...\n");
+    fflush (stdout);
+    retrieve_local_mac (ifindex, src_mac);
+    retrieve_local_ip (ifindex, src_ip);
+
+    int sock = socket (AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0)
+    {
+        perror ("socket");
+        return -1;
+    }
+
+    // bind to local address port 1234
+    struct sockaddr_in local_addr;
+    local_addr.sin_family = AF_INET;
+    local_addr.sin_port = htons (1234);
+    local_addr.sin_addr.s_addr = INADDR_ANY;
+    int ret = bind (sock, (struct sockaddr *) &local_addr, sizeof (struct sockaddr_in));
+    if (ret < 0)
+    {
+        perror ("bind");
+        return -1;
+    }
+
+    if (!is_server)
+    {
+        // send my info to the server
+        struct sockaddr_in server_addr;
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons (1234);
+        server_addr.sin_addr.s_addr = inet_addr (server_ip);
+
+        char buf[INFO_PACKET_SIZE];
+        memcpy (buf, src_mac, ETH_ALEN);
+        memcpy (buf + ETH_ALEN, src_ip, sizeof (uint32_t));
+        int ret = sendto (sock, buf, INFO_PACKET_SIZE, 0, (struct sockaddr *) &server_addr, sizeof (struct sockaddr_in));
+        if (ret < 0)
+        {
+            perror ("sendto");
+            return -1;
+        }
+
+        // wait for the server message containing its info
+        memset (buf, 0, INFO_PACKET_SIZE);
+        ret = recvfrom (sock, buf, INFO_PACKET_SIZE, 0, NULL, NULL);
+        if (ret < 0)
+        {
+            perror ("recvfrom");
+            return -1;
+        }
+
+        memcpy (dest_mac, buf, ETH_ALEN);
+        memcpy (dest_ip, buf + ETH_ALEN, sizeof (uint32_t));
+    }
+    else
+    {
+        // wait for the client message containing its info
+        char buf[INFO_PACKET_SIZE];
+        memset (buf, 0, INFO_PACKET_SIZE);
+        ret = recvfrom (sock, buf, INFO_PACKET_SIZE, 0, NULL, NULL);
+        if (ret < 0)
+        {
+            perror ("recvfrom");
+            return -1;
+        }
+
+        memcpy (dest_mac, buf, ETH_ALEN);
+        memcpy (dest_ip, buf + ETH_ALEN, sizeof (uint32_t));
+
+        // send my info to the client
+        struct sockaddr_in client_addr;
+        client_addr.sin_family = AF_INET;
+        client_addr.sin_port = htons (1234);
+        client_addr.sin_addr.s_addr = *dest_ip;
+
+        memcpy (buf, src_mac, ETH_ALEN);
+        memcpy (buf + ETH_ALEN, src_ip, sizeof (uint32_t));
+        ret = sendto (sock, buf, INFO_PACKET_SIZE, 0, (struct sockaddr *) &client_addr, sizeof (struct sockaddr_in));
+        if (ret < 0)
+        {
+            perror ("sendto");
+            return -1;
+        }
+    }
+
+    close (sock);
+
+    LOG (stdout, "Exchange of addresses completed!\n");
+    return 0;
+}
+
 int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_mac,
-                       const char *src_ip, const char *dest_ip)
+                       const uint32_t src_ip, const uint32_t dest_ip)
 {
     struct ethhdr *eth = (struct ethhdr *) buf;
     for (int i = 0; i < ETH_ALEN; ++i)
@@ -41,14 +212,6 @@ int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_ma
     }
 
     eth->h_proto = __constant_htons (ETH_P_PINGPONG);
-
-    uint32_t src_ip_addr;
-    if (convert_ip (src_ip, &src_ip_addr) < 0)
-        return -1;
-
-    uint32_t dest_ip_addr;
-    if (convert_ip (dest_ip, &dest_ip_addr) < 0)
-        return -1;
 
     struct iphdr *ip = (struct iphdr *) (eth + 1);
     ip->ihl = 5;
@@ -60,8 +223,8 @@ int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_ma
     ip->ttl = 64;
     ip->protocol = IPPROTO_RAW;
     ip->check = 0;
-    ip->saddr = src_ip_addr;
-    ip->daddr = dest_ip_addr;
+    ip->saddr = src_ip;
+    ip->daddr = dest_ip;
 
     return 0;
 }

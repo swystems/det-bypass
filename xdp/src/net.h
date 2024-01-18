@@ -11,9 +11,11 @@
 #include <linux/types.h>
 #include <net/if.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -31,7 +33,7 @@ int setup_socket (void);
  * @return 0 on success, -1 on failure
  */
 int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_mac,
-                       const char *src_ip, const char *dest_ip);
+                       const uint32_t src_ip, const uint32_t dest_ip);
 
 /**
  * Set the id of the payload inside buf.
@@ -74,3 +76,39 @@ int send_pingpong_packet (int sock, const char *buf, struct sockaddr_ll *sock_ad
  * @return 0 on success, -1 on failure
  */
 int start_sending_packets (int sock, uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr);
+
+/**
+ * Retrieve the local interface MAC address.
+ *
+ * @param ifindex the index of the interface
+ * @param out_mac the output buffer to write the MAC address to
+ * @return 0 on success, -1 on failure
+ */
+int retrieve_local_mac (int ifindex, uint8_t *out_mac);
+
+/**
+ * Retrieve the local interface IP address.
+ *
+ * @param ifindex the index of the interface
+ * @param out_addr the output buffer to write the IP address to
+ * @return 0 on success, -1 on failure
+ */
+int retrieve_local_ip (int ifindex, uint32_t *out_addr);
+
+/**
+ * Make the client and server exchange IP and MAC addresses.
+ * The client sends a UDP message containing its own addresses; the server replies with its own addresses.
+ * Doing so avoids any kind of hard-coded addresses or configuration.
+ *
+ * @param ifindex the index of the interface
+ * @param server_ip the IP address of the server, required to send the UDP packet
+ * @param is_server whether this node is the server or not
+ * @param src_mac buffer to write the source MAC address to
+ * @param dest_mac buffer to write the destination MAC address to
+ * @param src_ip buffer to write the source IP address to
+ * @param dest_ip buffer to write the destination IP address to
+ * @return 0 on success, -1 on failure
+ */
+int exchange_addresses (const int ifindex, const char *server_ip, bool is_server,
+                        uint8_t *src_mac, uint8_t *dest_mac,
+                        uint32_t *src_ip, uint32_t *dest_ip);

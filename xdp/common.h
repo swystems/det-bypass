@@ -34,7 +34,14 @@
 #define PERROR(errno)
 #endif
 
+// Size of the pingpong packet exchanged
 #define PACKET_SIZE 1024
+
+// Size of the exchanged packet containing MAC address (6 bytes) and IP address (4 bytes) of each machine
+// This packet is sent before the start of pingpong to exchange the addresses without hardcoding them
+#define INFO_PACKET_SIZE (ETH_ALEN + sizeof (uint32_t))
+
+// Custom ethernet protocol number
 #define ETH_P_PINGPONG 0x2002
 
 struct pingpong_payload {
