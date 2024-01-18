@@ -75,7 +75,12 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
     if (ret < 0)
         return;
 
+    struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
+
     LOG (stdout, "Starting pingpong, source IP address: %s, destination IP address: %s\n", src_ip, dest_ip);
+
+    if (!is_server)
+        start_sending_packets (sock, iters, 100000, buf, &sock_addr);
 
     // if client, send packet (phase 0), receive it back (phase 1), send it back (phase 2) and wait to receive it back again (phase 3)
     // then start again.
@@ -96,59 +101,37 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 
             payload.ts[1] = receive_time;
 
-            current_id = payload.id;
+            current_id = max (current_id, payload.id);
 
             payload.ts[2] = get_time_ns ();
 
             payload.phase = 2;
 
             set_packet_payload (buf, &payload);
-            int ret = send_pingpong_packet (sock, buf, ifindex, dest_mac);
+            int ret = send_pingpong_packet (sock, buf, &sock_addr);
             if (ret < 0)
             {
                 perror ("sendto");
                 return;
             }
 
-            if (current_id >= iters - 1)
+            if (current_id >= iters)
                 break;
         }
         else
         {
-            struct pingpong_payload payload = {0};
-            payload.phase = 0;
-            payload.id = current_id;
-            payload.ts[0] = get_time_ns ();
-            set_packet_payload (buf, &payload);
-
-            int ret = send_pingpong_packet (sock, buf, ifindex, dest_mac);
-            if (ret < 0)
-            {
-                perror ("sendto");
-                return;
-            }
-
-            payload = poll_next_payload (map_ptr);
+            struct pingpong_payload payload = poll_next_payload (map_ptr);
             if (payload.phase != 2)
             {
                 fprintf (stderr, "ERR: expected phase 2, got %d\n", payload.phase);
                 return;
             }
-            if (payload.id != current_id)
-            {
-                fprintf (stderr, "ERR: expected id %d, got %d\n", current_id, payload.id);
-                return;
-            }
 
             payload.ts[3] = get_time_ns ();
 
-            char output_str[100];
-            snprintf (output_str, 100, "%llu %llu %llu %llu\n", payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3]);
+            persistence_write (&payload);
 
-            persistence_write ((uint8_t *) output_str, strlen (output_str));
-
-            ++current_id;
-            usleep (20);
+            current_id = max (current_id, payload.id);
         }
     }
 

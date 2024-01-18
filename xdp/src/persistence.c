@@ -23,7 +23,7 @@ int persistence_init (const char *filename)
     return 0;
 }
 
-int persistence_write (const uint8_t *data, size_t size)
+int persistence_write (const struct pingpong_payload *payload)
 {
     if (!persistence_inited)
     {
@@ -31,7 +31,8 @@ int persistence_write (const uint8_t *data, size_t size)
         return -1;
     }
 
-    if (fwrite (data, size, 1, persistence_file) != 1)
+    // print the paylaod id to file
+    if (fprintf (persistence_file, "%d\n", payload->id) < 0)
     {
         LOG (stderr, "ERROR: Could not write to persistence file\n");
         return -1;

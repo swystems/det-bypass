@@ -21,7 +21,7 @@ int persistence_init (const char *filename);
  * @param size the size of the data
  * @return 0 on success, -1 on error
  */
-int persistence_write (const uint8_t *data, size_t size);
+int persistence_write (const struct pingpong_payload *data);
 
 /**
  * Close the persistence module.
