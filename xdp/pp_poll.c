@@ -27,6 +27,14 @@ static const char *outfile = "pingpong.dat";
 // global variable to store the loaded xdp object
 static struct bpf_object *loaded_xdp_obj;
 
+/**
+ * Busy-poll until a new payload is available in the BPF map.
+ * If the values inside the map change faster than this function is called/can poll,
+ * the payload will be overwritten and lost.
+ *
+ * @param map_ptr the pointer to the BPF map
+ * @return the next payload
+ */
 inline struct pingpong_payload poll_next_payload (void *map_ptr)
 {
     struct pingpong_payload *payload = (struct pingpong_payload *) map_ptr;
@@ -36,6 +44,42 @@ inline struct pingpong_payload poll_next_payload (void *map_ptr)
     return *payload;
 }
 
+/**
+ * Start the pingpong experiment between the current node and the remote node.
+ *
+ * If server_ip is NULL, the current node is the server. Otherwise, it is the client.
+ *
+ * First, client and server exchange each other's mac and ip addresses using UDP packets.
+ * Then, the client starts a thread that sends `iters` packets to the server.
+ * In the meanwhile, both the client and server will be running this function that keeps polling
+ * the BPF map to retrieve the last received packet.
+ *
+ * The pingpong can be visualized as follows:
+ *     Client                 Server
+ *  ╔══════════╗           ╔══════════╗
+ *  ║          ║           ║          ║
+ *  ║  Phase 0 ║  ──────>  ║ Phase 1  ║
+ *  ║          ║           ║          ║
+ *  ║  Phase 3 ║  <──────  ║ Phase 2  ║
+ *  ║          ║           ║          ║
+ *  ╚══════════╝           ╚══════════╝
+ *
+ * Phase 0 is the packet being created by the client and sent to the server.
+ * Timestamp 0 contains the client PING TX timestamp of the packet.
+ *
+ * Phase 1 is the packet being received by the server.
+ * Timestamp 1 contains the server PING RX timestamp of the packet.
+ *
+ * Phase 2 is the packet being sent back by the server.
+ * Timestamp 2 contains the server PONG TX timestamp of the packet.
+ *
+ * Phase 3 is the packet being received back by the client.
+ * Timestamp 3 contains the client PONG RX timestamp of the packet.
+ *
+ * @param ifindex the interface index
+ * @param server_ip the server IP address
+ * @param iters the number of packets to send
+ */
 void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 {
     printf ("Starting pingpong\n");
@@ -77,8 +121,6 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
         return;
 
     struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
-
-    LOG (stdout, "Starting pingpong, source IP address: %s, destination IP address: %s\n", src_ip, dest_ip);
 
     if (!is_server)
         start_sending_packets (sock, iters, 100000, buf, &sock_addr);
@@ -192,6 +234,7 @@ int main (int argc, char **argv)
     {
         detach_pingpong_xdp (ifindex);// always try to detach first
 
+        // attach the pingpong XDP program
         int ret = attach_pingpong_xdp (ifindex);
         if (ret)
         {
@@ -201,7 +244,7 @@ int main (int argc, char **argv)
         printf ("XDP program attached\n");
 
         const int iters = atoi (argv[3]);
-        char *ip = argc > 4 ? argv[4] : NULL;
+        char *ip = argc > 4 ? argv[4] : NULL;// not required, only for the client
 
         start_pingpong (ifindex, ip, iters);
     }

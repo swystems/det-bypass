@@ -34,11 +34,17 @@
 #define PERROR(errno)
 #endif
 
-// Size of the pingpong packet exchanged
+/**
+ * Size of the whole pingpong packet.
+ * Although the actual payload (Ethernet header + IP header + pingpong payload) is smaller than this,
+ * the packet should be the same across all the XDP, RDMA and DPDK measurements.
+ */
 #define PACKET_SIZE 1024
 
-// Size of the exchanged packet containing MAC address (6 bytes) and IP address (4 bytes) of each machine
-// This packet is sent before the start of pingpong to exchange the addresses without hardcoding them
+/**
+ * Size of the exchanged packet containing MAC address (6 bytes) and IP address (4 bytes) of each machine.
+ * This packet is sent before the start of pingpong to exchange the addresses without hardcoding them
+ */
 #define INFO_PACKET_SIZE (ETH_ALEN + sizeof (uint32_t))
 
 // Custom ethernet protocol number
