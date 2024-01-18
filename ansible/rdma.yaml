@@ -27,17 +27,17 @@
           - libnl-utils
 
     - name: Add persistent naming to RoCE devices
-      block:
-        - name: Update persistent naming rules file
-          become: yes
-          lineinfile:
-            path: /usr/lib/udev/rules.d/60-rdma-persistent-naming.rules
-            regexp: '^ACTION=="add", SUBSYSTEM=="infiniband"'
-            line: 'ACTION=="add", SUBSYSTEM=="infiniband", PROGRAM="rdma_rename %k NAME_PCI"'
-            state: present
-        - name: Reboot the system
-          become: yes
-          reboot:
+      become: yes
+      lineinfile:
+        path: /usr/lib/udev/rules.d/60-rdma-persistent-naming.rules
+        regexp: '^ACTION=="add", SUBSYSTEM=="infiniband"'
+        line: 'ACTION=="add", SUBSYSTEM=="infiniband", PROGRAM="rdma_rename %k NAME_PCI"'
+        state: present
+      notify:
+        - Reboot
+
+    - name: Flush handlers
+      meta: flush_handlers
 
     - name: Rename IB node descriptors
       become: yes
@@ -51,3 +51,7 @@
         git clone https://github.com/linux-rdma/rdma-core.git
         cd rdma-core/
         ./build.sh
+
+  handlers:
+    - name: Reboot
+      reboot:

@@ -11,11 +11,17 @@
         }                                    \
     } while (0)
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
 #if DEBUG
 #define LOG(stream, fmt, ...)                 \
     do                                        \
     {                                         \
         fprintf (stream, fmt, ##__VA_ARGS__); \
+        fprintf (stream, "\n");               \
+        fflush (stream);                      \
     } while (0)
 
 #define PERROR(errno)   \

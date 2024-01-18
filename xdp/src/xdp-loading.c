@@ -94,3 +94,22 @@ int detach_xdp (struct bpf_object *obj, const char *prog_name, int ifindex, cons
 
     return 0;
 }
+
+void *mmap_bpf_map (struct bpf_object *loaded_xdp_obj, const char *mapname, const size_t map_size)
+{
+    int map_fd = bpf_object__find_map_fd_by_name (loaded_xdp_obj, mapname);
+    if (map_fd < 0)
+    {
+        LOG (stderr, "ERR: finding map failed\n");
+        return NULL;
+    }
+
+    void *map = mmap (NULL, map_size, PROT_READ, MAP_SHARED, map_fd, 0);
+    if (map == MAP_FAILED)
+    {
+        LOG (stderr, "ERR: mmap failed\n");
+        return NULL;
+    }
+
+    return map;
+}

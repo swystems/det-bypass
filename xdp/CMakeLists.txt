@@ -11,8 +11,13 @@ add_custom_target(pingpong
 )
 
 link_libraries(bpf xdp)
+
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -g -Wall -Werror -Wextra -Wpedantic")
-# glob all files in src/*.c
+if (NOT DEBUG)
+    set(DEBUG 0)
+endif()
+add_definitions(-DDEBUG=${DEBUG})
+
 file(GLOB SOURCES src/*.c)
 add_executable(loader ${SOURCES} loader.c)
 

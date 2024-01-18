@@ -6,12 +6,16 @@
 #include <arpa/inet.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
+#include <linux/in.h>
 #include <linux/ip.h>
 #include <linux/types.h>
 #include <net/if.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
+
+int setup_socket (void);
 
 /**
  * Construct the base structure of the packet inside buf by writing the ethernet and ip headers
@@ -31,26 +35,17 @@ int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_ma
  * Set the id of the payload inside buf.
  * This function both modifies the pingpong payload id and the ip header id.
  *
- * @param buf the buffer containing the packet
- * @param id the id to set
  * @return 0 on success, -1 on failure
  */
-int setup_packet_payload (char *buf, uint32_t id);
+int set_packet_payload (char *buf, struct pingpong_payload *payload);
 
 /**
- * Build a sockaddr_ll structure with the given ifindex and destination mac address.
- * This structure is used to send packets to the remote node.
+ * Send a pingpong packet to the remote node.
  *
- * @param ifindex the interface index
+ * @param sock the socket to use to send the packet
+ * @param buf the buffer to be sent
+ * @param ifindex the interface index to send the packet from
  * @param dest_mac the destination mac address
- * @return the constructed sockaddr_ll structure
+ * @return 0 on success, -1 on failure
  */
-struct sockaddr_ll build_sockaddr (int ifindex, const char *dest_mac);
-
-/**
- * Send `iters` pingpong packets to the remote server.
- *
- * @param ifindex the interface index
- * @param server_ip the ip address of the remote server
- */
-void send_packets (int ifindex, const char *server_ip, uint64_t iters, uint64_t interval);
+int send_pingpong_packet (int sock, const char *buf, int ifindex, const uint8_t *dest_mac);

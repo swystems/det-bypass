@@ -22,87 +22,127 @@ void usage (char *prog)
 static const char *filename = "pingpong.o";
 static const char *prog_name = "xdp_main";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong";
-static const char *mapname = "last_timestamp";
+static const char *mapname = "last_payload";
 
 // global variable to store the loaded xdp object
 static struct bpf_object *loaded_xdp_obj;
 
-// whether the polling thread is ready
-volatile bool is_polling = false;
-
-/**
- * Continuously poll the XDP map for the latest pingpong_payload value and print it.
- * @param iters_ptr a pointer to the number of iterations to poll for. The ownership of this pointer is transferred to
- *                 the thread. The thread is responsible for freeing it.
- */
-void *poll_thread (void *iters_ptr)
+inline struct pingpong_payload poll_next_payload (void *map_ptr)
 {
-    const uint32_t iters = *(uint32_t *) iters_ptr;
-
-    int map_fd = bpf_object__find_map_fd_by_name (loaded_xdp_obj, mapname);
-    if (map_fd < 0)
-    {
-        fprintf (stderr, "ERR: finding map failed\n");
-        goto exit;
-    }
-
-    void *map = mmap (NULL, sizeof (struct pingpong_payload), PROT_READ, MAP_SHARED, map_fd, 0);
-    if (map == MAP_FAILED)
-    {
-        fprintf (stderr, "ERR: mmap failed\n");
-        goto exit;
-    }
-
-    // notify the program that the polling thread is ready
-    is_polling = true;
-
-    uint32_t last_id = 0;
-    struct pingpong_payload *payload = map;
-    while (last_id < iters - 1)
-    {
-        printf ("ID %d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2],
-                payload->ts[3]);
-        last_id = payload->id;
-
-        if (last_id == iters - 1)
-            break;
-
-        BUSY_WAIT (payload->id == last_id);
-    }
-
-    munmap (map, sizeof (struct pingpong_payload));
-
-    printf ("Poll thread finished\n");
-
-exit:
-    free (iters_ptr);
-    return NULL;
-}
-
-pthread_t start_poll_thread (const uint32_t iters)
-{
-    // Allocate iters on the heap :( ugly
-    int *iters_ptr = malloc (sizeof (int));
-    *iters_ptr = iters;
-
-    // Create and start a thread with poll_thread function
-    pthread_t thread;
-    pthread_create (&thread, NULL, poll_thread, iters_ptr);
-
-    BUSY_WAIT (!is_polling);
-
-    return thread;
+    struct pingpong_payload *payload = (struct pingpong_payload *) map_ptr;
+    uint32_t last_id = payload->id;
+    uint32_t last_phase = payload->phase;
+    BUSY_WAIT (payload->id == last_id && payload->phase == last_phase);
+    return *payload;
 }
 
 void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 {
-    const pthread_t thread = start_poll_thread (iters);
+    LOG (stdout, "Starting pingpong experiment...\n");
+    // "src" and "dest" are from the point of view of the client
+    // if I am the server, they must be swapped
+    const uint8_t client_mac[ETH_ALEN] = {0x0c, 0x42, 0xa1, 0xdd, 0x60, 0xb0};
+    const uint8_t server_mac[ETH_ALEN] = {0x0c, 0x42, 0xa1, 0xe2, 0xa6, 0xa8};
 
-    sleep (1);// just some time to make sure the polling thread is ready
+    const char *client_ip = "10.10.1.1";
 
-    send_packets (ifindex, server_ip, iters, 20000);
+    bool is_server = server_ip == NULL;// if no server_ip is provided, I must be the server
 
-    pthread_join (thread, NULL);
+    const uint8_t *src_mac = is_server ? server_mac : client_mac;
+    const uint8_t *dest_mac = is_server ? client_mac : server_mac;
+    const char *src_ip = is_server ? "10.10.1.2" : client_ip;
+    const char *dest_ip = is_server ? client_ip : server_ip;
+
+    void *map_ptr = mmap_bpf_map (loaded_xdp_obj, mapname, sizeof (struct pingpong_payload));
+    if (!map_ptr)
+    {
+        fprintf (stderr, "ERR: mmap_bpf_map failed\n");
+        return;
+    }
+
+    int sock = setup_socket ();
+    if (sock < 0)
+    {
+        fprintf (stderr, "ERR: setup_socket failed\n");
+        return;
+    }
+
+    char buf[PACKET_SIZE];
+    memset (buf, 0, PACKET_SIZE);
+
+    int ret = build_base_packet (buf, src_mac, dest_mac, src_ip, dest_ip);
+    if (ret < 0)
+        return;
+
+    LOG (stdout, "Starting pingpong, source IP address: %s, destination IP address: %s\n", src_ip, dest_ip);
+
+    // if client, send packet (phase 0), receive it back (phase 1), send it back (phase 2) and wait to receive it back again (phase 3)
+    // then start again.
+    // if server, wait to receive packet (phase 1), send it back (phase 2), repeat.
+    uint32_t current_id = 1;
+    while (current_id < iters)
+    {
+        if (is_server)
+        {
+            struct pingpong_payload payload = poll_next_payload (map_ptr);
+
+            uint64_t receive_time = get_time_ns ();
+            if (payload.phase != 0)
+            {
+                fprintf (stderr, "ERR: expected phase 0, got %d\n", payload.phase);
+                return;
+            }
+
+            payload.ts[1] = receive_time;
+
+            current_id = payload.id;
+
+            payload.ts[2] = get_time_ns ();
+
+            payload.phase = 2;
+
+            set_packet_payload (buf, &payload);
+            int ret = send_pingpong_packet (sock, buf, ifindex, dest_mac);
+            if (ret < 0)
+            {
+                perror ("sendto");
+                return;
+            }
+        }
+        else
+        {
+            struct pingpong_payload payload = {0};
+            payload.phase = 0;
+            payload.id = current_id;
+            payload.ts[0] = get_time_ns ();
+            set_packet_payload (buf, &payload);
+
+            int ret = send_pingpong_packet (sock, buf, ifindex, dest_mac);
+            if (ret < 0)
+            {
+                perror ("sendto");
+                return;
+            }
+
+            payload = poll_next_payload (map_ptr);
+            if (payload.phase != 2)
+            {
+                fprintf (stderr, "ERR: expected phase 2, got %d\n", payload.phase);
+                return;
+            }
+            if (payload.id != current_id)
+            {
+                fprintf (stderr, "ERR: expected id %d, got %d\n", current_id, payload.id);
+                return;
+            }
+
+            payload.ts[3] = get_time_ns ();
+            printf ("Packet %d: %llu %llu %llu %llu\n", payload.id, payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3]);
+
+            ++current_id;
+            usleep (20);
+        }
+    }
 }
 
 int attach_pingpong_xdp (int ifindex)
@@ -130,6 +170,9 @@ int detach_pingpong_xdp (int ifindex)
 
 int main (int argc, char **argv)
 {
+#if DEBUG
+    printf ("DEBUG mode\n");
+#endif
     if (argc < 3)
     {
         usage (argv[0]);
@@ -158,20 +201,8 @@ int main (int argc, char **argv)
         }
         printf ("XDP program attached\n");
 
-        if (argc == 3)
-        {
-            // the client does not need to do anything else (for now!)
-            return EXIT_SUCCESS;
-        }
-        else if (argc < 5)
-        {
-            // if it's not 3, it must be at least 5
-            usage (argv[0]);
-            return EXIT_FAILURE;
-        }
-
         const int iters = atoi (argv[3]);
-        char *ip = argv[4];
+        char *ip = argc > 4 ? argv[4] : NULL;
 
         start_pingpong (ifindex, ip, iters);
     }
