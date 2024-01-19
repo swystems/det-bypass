@@ -54,4 +54,5 @@
 
   handlers:
     - name: Reboot
+      become: yes
       reboot:
