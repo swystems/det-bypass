@@ -24,6 +24,9 @@ static const char *mapname = "last_payload";
 
 static const char *outfile = "pingpong.dat";
 
+static uint64_t interval = 50000;
+static persistence_agent_t *persistence;
+
 // global variable to store the loaded xdp object
 static struct bpf_object *loaded_xdp_obj;
 
@@ -82,29 +85,41 @@ inline struct pingpong_payload poll_next_payload (void *map_ptr)
  */
 void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 {
-    printf ("Starting pingpong\n");
-
-    persistence_init (outfile);
-
     bool is_server = server_ip == NULL;// if no server_ip is provided, I must be the server
+
+    if (!is_server)
+    {
+        LOG (stdout, "Initializing persistence module... ");
+        persistence = persistence_init (outfile, PERS_F_THREADED);
+        if (!persistence)
+        {
+            fprintf (stderr, "ERR: persistence_init failed\n");
+            return;
+        }
+        LOG (stdout, "OK\n");
+    }
 
     uint8_t src_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint8_t dest_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint32_t src_ip = 0;
     uint32_t dest_ip = 0;
+    LOG (stdout, "Exchanging addresses... ");
     int ret = exchange_addresses (ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
     if (ret < 0)
     {
         fprintf (stderr, "ERR: exchange_addresses failed\n");
         return;
     }
+    LOG (stdout, "OK\n");
 
+    LOG (stdout, "Memory mapping BPF map... ");
     void *map_ptr = mmap_bpf_map (loaded_xdp_obj, mapname, sizeof (struct pingpong_payload));
     if (!map_ptr)
     {
         fprintf (stderr, "ERR: mmap_bpf_map failed\n");
         return;
     }
+    LOG (stdout, "OK\n");
 
     int sock = setup_socket ();
     if (sock < 0)
@@ -123,11 +138,17 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
     struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
 
     if (!is_server)
-        start_sending_packets (sock, iters, 100000, buf, &sock_addr);
+    {
+        LOG (stdout, "Starting sender thread... ");
+        start_sending_packets (sock, iters, interval, buf, &sock_addr);
+        LOG (stdout, "OK\n");
+    }
 
     // if client, send packet (phase 0), receive it back (phase 1), send it back (phase 2) and wait to receive it back again (phase 3)
     // then start again.
     // if server, wait to receive packet (phase 1), send it back (phase 2), repeat.
+    printf ("\nStarting pingpong experiment... \n\n");
+    fflush (stdout);
     uint32_t current_id = 1;
     while (current_id < iters)
     {
@@ -172,22 +193,23 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
 
             payload.ts[3] = get_time_ns ();
 
-            persistence_write (&payload);
+            persistence->write (persistence, &payload);
 
             current_id = max (current_id, payload.id);
         }
     }
 
-    LOG (stdout, "Pingpong experiment finished\n");
+    printf ("Pingpong experiment finished\n");
+
     close (sock);
     munmap (map_ptr, sizeof (struct pingpong_payload));
-    persistence_close ();
-
-    return;
+    if (persistence)
+        persistence->close (persistence);
 }
 
 int attach_pingpong_xdp (int ifindex)
 {
+    LOG (stdout, "Attaching XDP program... ");
     struct bpf_object *obj = read_xdp_file (filename);
     if (!obj)
     {
@@ -195,7 +217,14 @@ int attach_pingpong_xdp (int ifindex)
     }
 
     loaded_xdp_obj = obj;
-    return attach_xdp (obj, prog_name, ifindex, pinpath);
+    int ret = attach_xdp (obj, prog_name, ifindex, pinpath);
+    if (ret)
+    {
+        fprintf (stderr, "ERR: attaching program failed\n");
+        return -1;
+    }
+    LOG (stdout, "OK\n");
+    return ret;
 }
 
 int detach_pingpong_xdp (int ifindex)
@@ -241,7 +270,6 @@ int main (int argc, char **argv)
             fprintf (stderr, "ERR: attaching program failed\n");
             return EXIT_FAILURE;
         }
-        printf ("XDP program attached\n");
 
         const int iters = atoi (argv[3]);
         char *ip = argc > 4 ? argv[4] : NULL;// not required, only for the client

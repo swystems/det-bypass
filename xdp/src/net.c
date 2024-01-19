@@ -110,8 +110,6 @@ int exchange_addresses (const int ifindex, const char *server_ip, bool is_server
                         uint8_t *src_mac, uint8_t *dest_mac,
                         uint32_t *src_ip, uint32_t *dest_ip)
 {
-    LOG (stdout, "Starting exchange of addresses...\n");
-    fflush (stdout);
     retrieve_local_mac (ifindex, src_mac);
     retrieve_local_ip (ifindex, src_ip);
 
@@ -197,7 +195,6 @@ int exchange_addresses (const int ifindex, const char *server_ip, bool is_server
 
     close (sock);
 
-    LOG (stdout, "Exchange of addresses completed!\n");
     return 0;
 }
 
@@ -321,8 +318,6 @@ int start_sending_packets (int sock, uint32_t iters, uint64_t interval, char *ba
     data->sock_addr = malloc (sizeof (struct sockaddr_ll));
     memcpy (data->base_packet, base_packet, PACKET_SIZE);
     memcpy (data->sock_addr, sock_addr, sizeof (struct sockaddr_ll));
-
-    LOG (stdout, "Data copied!");
 
     int ret = pthread_create (&sender_thread, NULL, thread_send_packets, data);
     if (ret < 0)

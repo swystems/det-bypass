@@ -20,7 +20,6 @@
     do                                        \
     {                                         \
         fprintf (stream, fmt, ##__VA_ARGS__); \
-        fprintf (stream, "\n");               \
         fflush (stream);                      \
     } while (0)
 
