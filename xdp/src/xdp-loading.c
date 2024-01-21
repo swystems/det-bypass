@@ -104,7 +104,7 @@ void *mmap_bpf_map (struct bpf_object *loaded_xdp_obj, const char *mapname, cons
         return NULL;
     }
 
-    void *map = mmap (NULL, map_size, PROT_READ, MAP_SHARED, map_fd, 0);
+    void *map = mmap (NULL, map_size, PROT_READ | PROT_WRITE, MAP_SHARED, map_fd, 0);
     if (map == MAP_FAILED)
     {
         LOG (stderr, "ERR: mmap failed\n");

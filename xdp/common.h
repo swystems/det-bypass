@@ -44,6 +44,7 @@
         printf ("Time: %lu\n", end - start); \
         fflush (stdout);                     \
     } while (0)
+
 /**
  * Size of the whole pingpong packet.
  * Although the actual payload (Ethernet header + IP header + pingpong payload) is smaller than this,
@@ -60,8 +61,50 @@
 // Custom ethernet protocol number
 #define ETH_P_PINGPONG 0x2002
 
+// Size of the map used to exchange the pingpong packets
+// The bigger, the slower the polling but the less likely to lose packets
+#define PACKETS_MAP_SIZE 16
+
+// Random magic number for pingpong packets
+#define PINGPONG_MAGIC 0x8badbeef
+
 struct pingpong_payload {
     __u32 id;
     __u32 phase;
     __u64 ts[4];
+
+    /**
+     * In an unsynchronized XDP-userspace polling communication, there is the possibility of a corruption of packets in the case of XDP writing the same space in memory that userspace is reading.
+     * To address this issue, a "magic number" was added at the end of the pingpong payload, which helps recognize the integrity of the packet without need of any checksum: before reading a packets from the map,
+     * the userspace app verified that the magic number matches; after reading a packet, its memory space in the eBPF map is zeroed.
+     * By doing this, the only possible way to read a packet in userspace is for XDP to have completely written the packet, including the magic number which is placed at the end;
+     * in the case of a half-written packet, the magic number would not match stopping the userspace from reading it.
+     */
+    __u32 magic;
 };
+
+inline struct pingpong_payload empty_pingpong_payload ()
+{
+    struct pingpong_payload payload;
+    payload.id = 0;
+    payload.phase = 0;
+    payload.ts[0] = 0;
+    payload.ts[1] = 0;
+    payload.ts[2] = 0;
+    payload.ts[3] = 0;
+    payload.magic = PINGPONG_MAGIC;
+
+    return payload;
+}
+
+/**
+ * Check if the given payload is valid.
+ * A payload is valid if its magic number is equal to PINGPONG_MAGIC.
+ *
+ * @param payload the payload to check
+ * @return 1 if the payload is valid, 0 otherwise
+ */
+inline __u32 valid_pingpong_payload (struct pingpong_payload *payload)
+{
+    return payload->magic == PINGPONG_MAGIC;
+}

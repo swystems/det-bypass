@@ -10,10 +10,29 @@ struct {
     __uint (map_flags, BPF_F_MMAPABLE);
     __type (key, __u32);
     __type (value, struct pingpong_payload);
-    __uint (max_entries, 1);
+    __uint (max_entries, PACKETS_MAP_SIZE);
     __uint (pinning, LIBBPF_PIN_BY_NAME);
 } last_payload
     SEC (".maps");
+
+static __u32 current_item_idx = 0;
+
+/**
+ * Add the given payload to the map.
+ *
+ * The packets are pushed to the map in a circular fashion.
+ * The only way for a packet to be overwritten is if the map gets full, which is very unlikely
+ * if the user-space continuously polls and the map capacity is big enough.
+ *
+ * @param payload the payload to add
+ * @return 0 on success, -1 on failure
+ */
+int add_packet_to_map (struct pingpong_payload *payload)
+{
+    current_item_idx++;
+    __u32 key = current_item_idx % PACKETS_MAP_SIZE;
+    return bpf_map_update_elem (&last_payload, &key, payload, BPF_ANY);
+}
 
 SEC ("xdp")
 int xdp_main (struct xdp_md *ctx)
@@ -36,8 +55,15 @@ int xdp_main (struct xdp_md *ctx)
 
     struct pingpong_payload *payload = data_start + sizeof (struct ethhdr) + sizeof (struct iphdr);
 
-    __u32 key = 0;
-    bpf_map_update_elem (&last_payload, &key, payload, BPF_ANY);
+    if (payload->magic != PINGPONG_MAGIC)
+    {
+        bpf_printk ("Invalid magic number: %u\n", payload->magic);
+        return XDP_PASS;
+    }
+
+    bpf_printk ("Received packet with id %u\n", payload->id);
+
+    add_packet_to_map (payload);
 
     return XDP_DROP;
 }

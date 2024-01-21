@@ -248,7 +248,7 @@ struct sockaddr_ll build_sockaddr (int ifindex, const unsigned char *dest_mac)
     return sock_addr;
 }
 
-inline int send_pingpong_packet (int sock, const char * restrict buf, struct sockaddr_ll *restrict sock_addr)
+inline int send_pingpong_packet (int sock, const char *restrict buf, struct sockaddr_ll *restrict sock_addr)
 {
     return sendto (sock, buf, PACKET_SIZE, MSG_DONTWAIT, (struct sockaddr *) sock_addr, sizeof (struct sockaddr_ll));
 }
@@ -271,9 +271,13 @@ void *thread_send_packets (void *args)
         return NULL;
     }
 
+    struct iphdr *ip = (struct iphdr *) (data->base_packet + sizeof (struct ethhdr));
+
     for (uint64_t id = 1; id <= data->iters; ++id)
     {
-        struct pingpong_payload payload;
+        ip->id = htons(id);
+
+        struct pingpong_payload payload = empty_pingpong_payload ();
         payload.id = id;
         payload.phase = 0;
         payload.ts[0] = get_time_ns ();
@@ -281,6 +285,7 @@ void *thread_send_packets (void *args)
         set_packet_payload (data->base_packet, &payload);
 
         int ret = send_pingpong_packet (data->sock, data->base_packet, data->sock_addr);
+        LOG (stdout, "Sent packet %lu\n", id);
         if (ret < 0)
         {
             PERROR ("send_pingpong_packet");
