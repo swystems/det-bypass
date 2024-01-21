@@ -38,13 +38,11 @@ static struct bpf_object *loaded_xdp_obj;
  * @param map_ptr the pointer to the BPF map
  * @return the next payload
  */
-inline struct pingpong_payload poll_next_payload (void *map_ptr)
+inline void poll_next_payload (void *map_ptr, struct pingpong_payload *dest_payload, uint32_t last_id)
 {
     struct pingpong_payload *payload = (struct pingpong_payload *) map_ptr;
-    uint32_t last_id = payload->id;
-    uint32_t last_phase = payload->phase;
-    BUSY_WAIT (payload->id == last_id && payload->phase == last_phase);
-    return *payload;
+    BUSY_WAIT (LIKELY (payload->id <= last_id));
+    *dest_payload = *payload;
 }
 
 /**
@@ -150,52 +148,56 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
     printf ("\nStarting pingpong experiment... \n\n");
     fflush (stdout);
     uint32_t current_id = 1;
-    while (current_id < iters)
-    {
-        if (is_server)
-        {
-            struct pingpong_payload payload = poll_next_payload (map_ptr);
 
-            uint64_t receive_time = get_time_ns ();
-            if (payload.phase != 0)
+    struct pingpong_payload *buf_payload = packet_payload (buf);
+    if (is_server)
+    {
+        while (current_id < iters)
+        {
+            poll_next_payload (map_ptr, buf_payload, current_id);
+
+            if (UNLIKELY (buf_payload->phase != 0))
             {
-                fprintf (stderr, "ERR: expected phase 0, got %d\n", payload.phase);
+                fprintf (stderr, "ERR: expected phase 0, got %d\n", buf_payload->phase);
                 return;
             }
 
-            payload.ts[1] = receive_time;
+            buf_payload->ts[1] = get_time_ns ();
 
-            current_id = max (current_id, payload.id);
+            current_id = max (current_id, buf_payload->id);
 
-            payload.ts[2] = get_time_ns ();
+            buf_payload->phase = 2;
 
-            payload.phase = 2;
+            buf_payload->ts[2] = get_time_ns ();
 
-            set_packet_payload (buf, &payload);
             int ret = send_pingpong_packet (sock, buf, &sock_addr);
-            if (ret < 0)
+            if (UNLIKELY (ret < 0))
             {
                 perror ("sendto");
                 return;
             }
 
-            if (current_id >= iters)
+            if (UNLIKELY (current_id >= iters))
                 break;
         }
-        else
+    }
+    else
+    {
+        while (current_id < iters)
         {
-            struct pingpong_payload payload = poll_next_payload (map_ptr);
-            if (payload.phase != 2)
+            poll_next_payload (map_ptr, buf_payload, current_id);
+
+            if (buf_payload->phase != 2)
             {
-                fprintf (stderr, "ERR: expected phase 2, got %d\n", payload.phase);
+                fprintf (stderr, "ERR: expected phase 2, got %d\n", buf_payload->phase);
                 return;
             }
 
-            payload.ts[3] = get_time_ns ();
+            buf_payload->ts[3] = get_time_ns ();
 
-            persistence->write (persistence, &payload);
+            persistence->write (persistence, buf_payload);
 
-            current_id = max (current_id, payload.id);
+            current_id = max (current_id, buf_payload->id);
         }
     }
 

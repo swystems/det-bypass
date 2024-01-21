@@ -44,6 +44,16 @@ int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_ma
 int set_packet_payload (char *buf, struct pingpong_payload *payload);
 
 /**
+ * Retrieve the payload from the given buffer.
+ * This function assumes that the buffer contains a valid pingpong packet.
+ * The returned pointer points to the payload inside the buffer.
+ *
+ * @param buf the buffer containing the packet
+ * @return a pointer to the payload inside the buffer
+ */
+struct pingpong_payload *packet_payload (char *buf);
+
+/**
  * Build a sockaddr_ll structure with the given ifindex and destination mac address.
  * This structure is used to send packets to the remote node.
  *

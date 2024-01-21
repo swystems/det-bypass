@@ -29,7 +29,6 @@ int xdp_main (struct xdp_md *ctx)
     }
 
     struct ethhdr *eth = data_start;
-    bpf_printk ("Received packet! Ethernet protocol: %d\n", eth->h_proto);
     if (eth->h_proto != __constant_htons (ETH_P_PINGPONG))
     {
         return XDP_PASS;
@@ -37,12 +36,8 @@ int xdp_main (struct xdp_md *ctx)
 
     struct pingpong_payload *payload = data_start + sizeof (struct ethhdr) + sizeof (struct iphdr);
 
-    bpf_printk ("Received packet with ID %d\n", payload->id);
-
     __u32 key = 0;
     bpf_map_update_elem (&last_payload, &key, payload, BPF_ANY);
-
-    bpf_printk ("Updated last_payload map\n");
 
     return XDP_DROP;
 }

@@ -228,13 +228,13 @@ int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_ma
 
 inline int set_packet_payload (char *buf, struct pingpong_payload *payload)
 {
-    struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
-    ip->id = htons (payload->id);
-
-    struct pingpong_payload *payload_ptr = (struct pingpong_payload *) (ip + 1);
-    *payload_ptr = *payload;
-
+    memcpy (buf + sizeof (struct ethhdr) + sizeof (struct iphdr), payload, sizeof (struct pingpong_payload));
     return 0;
+}
+
+inline struct pingpong_payload *packet_payload (char *buf)
+{
+    return (struct pingpong_payload *) (buf + sizeof (struct ethhdr) + sizeof (struct iphdr));
 }
 
 struct sockaddr_ll build_sockaddr (int ifindex, const unsigned char *dest_mac)
@@ -248,16 +248,9 @@ struct sockaddr_ll build_sockaddr (int ifindex, const unsigned char *dest_mac)
     return sock_addr;
 }
 
-int send_pingpong_packet (int sock, const char *buf, struct sockaddr_ll *sock_addr)
+inline int send_pingpong_packet (int sock, const char * restrict buf, struct sockaddr_ll *restrict sock_addr)
 {
-    int ret = sendto (sock, buf, PACKET_SIZE, 0, (struct sockaddr *) sock_addr, sizeof (struct sockaddr_ll));
-    if (ret < 0)
-    {
-        PERROR ("sendto");
-        return -1;
-    }
-
-    return 0;
+    return sendto (sock, buf, PACKET_SIZE, MSG_DONTWAIT, (struct sockaddr *) sock_addr, sizeof (struct sockaddr_ll));
 }
 
 struct sender_data {
