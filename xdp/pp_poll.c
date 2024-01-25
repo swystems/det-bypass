@@ -12,7 +12,7 @@ void usage (char *prog)
     fprintf (stderr, "Usage: %s <ifname> <action> [extra arguments]\n", prog);
     fprintf (stderr, "Actions:\n");
     fprintf (stderr, "\t- start: start the pingpong experiment\n");
-    fprintf (stderr, "\t         only on the client machine, it requires two extra arguments: <number of packets> <server IP>\n");
+    fprintf (stderr, "\t         on the client, it requires extra arguments: <number of packets> <packets interval (ns)> <server IP>\n");
     fprintf (stderr, "\t- remove: remove XDP program\n");
 }
 
@@ -24,7 +24,6 @@ static const char *mapname = "last_payload";
 
 static const char *outfile = "pingpong.dat";
 
-static uint64_t interval = 25000;
 static persistence_agent_t *persistence;
 
 // global variable to store the loaded xdp object
@@ -101,8 +100,9 @@ inline int poll_next_payload (void *map_ptr, struct pingpong_payload *dest_paylo
  * @param ifindex the interface index
  * @param server_ip the server IP address
  * @param iters the number of packets to send
+ * @param interval only for the client, the interval between packets
  */
-void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters)
+void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, const uint32_t interval)
 {
     bool is_server = server_ip == NULL;// if no server_ip is provided, I must be the server
 
@@ -294,9 +294,16 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+
     if (strcmp (action, "start") == 0)
     {
         detach_pingpong_xdp (ifindex);// always try to detach first
+
+        if (argc != 4 && argc != 6) // argc=4 is server (./prog ifname start iters) argc=6 is client (./prog ifname start iters interval ip)
+        {
+            usage (argv[0]);
+            return EXIT_FAILURE;
+        }
 
         // attach the pingpong XDP program
         int ret = attach_pingpong_xdp (ifindex);
@@ -307,9 +314,17 @@ int main (int argc, char **argv)
         }
 
         const int iters = atoi (argv[3]);
-        char *ip = argc > 4 ? argv[4] : NULL;// not required, only for the client
+        if (argc == 4)
+        {
+            start_pingpong (ifindex, NULL, iters, 0);
+        }
+        else
+        {
+            uint32_t interval = atoi (argv[4]);
+            char *ip = argv[5];
 
-        start_pingpong (ifindex, ip, iters);
+            start_pingpong (ifindex, ip, iters, interval);
+        }
     }
     else if (strcmp (action, "remove") == 0)
     {
