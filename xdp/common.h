@@ -1,6 +1,7 @@
 #pragma once
 
 #include <linux/types.h>
+#define __unused __attribute__ ((unused))
 
 #define LIKELY(x) (__builtin_expect (!!(x), 1))
 #define UNLIKELY(x) (__builtin_expect (!!(x), 0))

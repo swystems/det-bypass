@@ -10,6 +10,7 @@
         pkg:
           - libelf-dev
           - libpcap-dev
+          - libcap-dev
 #          - libbpf-dev - libbpf-dev is an older version, best to install from source
           - gcc-multilib # needed for <asm/types.h>
     - name: Install libxdp

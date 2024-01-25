@@ -9,7 +9,9 @@ set(CMAKE_CXX_STANDARD 17)
 add_custom_target(pingpong
         COMMAND clang -Wall -O3 -g -target bpf -c ${CMAKE_CURRENT_SOURCE_DIR}/pingpong.c -o ${CMAKE_CURRENT_BINARY_DIR}/pingpong.o
 )
-
+add_custom_target(pingpong_xsk
+        COMMAND clang -Wall -O3 -g -target bpf -c ${CMAKE_CURRENT_SOURCE_DIR}/pingpong_xsk.c -o ${CMAKE_CURRENT_BINARY_DIR}/pingpong_xsk.o
+)
 link_libraries(bpf xdp)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -g -Wall -Werror -Wextra -Wpedantic")
@@ -20,6 +22,7 @@ add_definitions(-DDEBUG=${DEBUG})
 
 file(GLOB SOURCES src/*.c)
 add_executable(pp_poll ${SOURCES} pp_poll.c)
-
-# add xdp-loading.c xdp-loading.h as dependency of pp_poll
 add_dependencies(pp_poll pingpong)
+
+add_executable (pp_sock ${SOURCES} pp_sock.c)
+add_dependencies(pp_sock pingpong_xsk)
