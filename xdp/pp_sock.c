@@ -89,13 +89,6 @@ struct xsk_umem_info {
     struct xsk_umem *umem;
     void *buffer;
 };
-struct stats_record {
-    uint64_t timestamp;
-    uint64_t rx_packets;
-    uint64_t rx_bytes;
-    uint64_t tx_packets;
-    uint64_t tx_bytes;
-};
 struct xsk_socket_info {
     struct xsk_ring_cons rx;
     struct xsk_ring_prod tx;
@@ -106,9 +99,6 @@ struct xsk_socket_info {
     uint32_t umem_frame_free;
 
     uint32_t outstanding_tx;
-
-    struct stats_record stats;
-    struct stats_record prev_stats;
 };
 
 static inline __u32 xsk_ring_prod__free (struct xsk_ring_prod *r)
@@ -247,14 +237,45 @@ static void complete_tx (struct xsk_socket_info *xsk)
     }
 }
 
+static int xsk_send_packet (struct xsk_socket_info *socket, uint64_t addr, uint32_t len, bool is_umem_frame, bool complete)
+{
+    int ret;
+    uint32_t tx_idx = 0;
+
+    ret = xsk_ring_prod__reserve (&socket->tx, 1, &tx_idx);
+    if (ret != 1)
+    {
+        /* No more transmit slots, drop the packet */
+        return -1;
+    }
+
+    if (is_umem_frame)
+    {
+        xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->addr = addr;
+    }
+    else
+    {
+        xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->addr = xsk_alloc_umem_frame (socket);
+        memcpy (xsk_umem__get_data (socket->umem->buffer, xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->addr), (void *) addr, len);
+    }
+    xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->len = len;
+    xsk_ring_prod__submit (&socket->tx, 1);
+    socket->outstanding_tx++;
+
+    if (complete)
+    {
+        complete_tx (socket);
+    }
+
+    return 0;
+}
+
 static bool process_packet (struct xsk_socket_info *xsk,
                             uint64_t addr, uint32_t len)
 {
     uint64_t receive_timestamp = get_time_ns ();
     uint8_t *pkt = xsk_umem__get_data (xsk->umem->buffer, addr);
 
-    int ret;
-    uint32_t tx_idx = 0;
     uint8_t tmp_mac[ETH_ALEN];
     uint32_t tmp_ip;
 
@@ -297,21 +318,7 @@ static bool process_packet (struct xsk_socket_info *xsk,
         /* Here we sent the packet out of the receive port. Note that
      * we allocate one entry and schedule it. Your design would be
      * faster if you do batch processing/transmission */
-
-        ret = xsk_ring_prod__reserve (&xsk->tx, 1, &tx_idx);
-        if (ret != 1)
-        {
-            /* No more transmit slots, drop the packet */
-            return false;
-        }
-        xsk_ring_prod__tx_desc (&xsk->tx, tx_idx)->addr = addr;
-        xsk_ring_prod__tx_desc (&xsk->tx, tx_idx)->len = len;
-
-        xsk_ring_prod__submit (&xsk->tx, 1);
-        xsk->outstanding_tx++;
-
-        xsk->stats.tx_bytes += len;
-        xsk->stats.tx_packets++;
+        xsk_send_packet (xsk, addr, len, true, false);
         return true;
     }
     else
@@ -363,12 +370,9 @@ static void handle_receive_packets (struct xsk_socket_info *xsk)
 
         if (!process_packet (xsk, addr, len))
             xsk_free_umem_frame (xsk, addr);
-
-        xsk->stats.rx_bytes += len;
     }
 
     xsk_ring_cons__release (&xsk->rx, rcvd);
-    xsk->stats.rx_packets += rcvd;
 
     /* Do we need to wake up the kernel for transmission */
     complete_tx (xsk);
@@ -398,113 +402,16 @@ static void rx_and_process (struct config *cfg,
     }
 }
 
-#if STATS_THREAD
-static double calc_period (struct stats_record *r, struct stats_record *p)
-{
-    double period_ = 0;
-    __u64 period = 0;
-
-    period = r->timestamp - p->timestamp;
-    if (period > 0)
-        period_ = ((double) period / 1e9);
-
-    return period_;
-}
-
-pthread_t stats_poll_thread;
-static void stats_print (struct stats_record *stats_rec,
-                         struct stats_record *stats_prev)
-{
-    uint64_t packets, bytes;
-    double period;
-    double pps; /* packets per sec */
-    double bps; /* bits per sec */
-
-    char *fmt = "%-12s %'11lld pkts (%'10.0f pps)"
-                " %'11lld Kbytes (%'6.0f Mbits/s)"
-                " period:%f\n";
-
-    period = calc_period (stats_rec, stats_prev);
-    if (period == 0)
-        period = 1;
-
-    packets = stats_rec->rx_packets - stats_prev->rx_packets;
-    pps = packets / period;
-
-    bytes = stats_rec->rx_bytes - stats_prev->rx_bytes;
-    bps = (bytes * 8) / period / 1000000;
-
-    printf (fmt, "AF_XDP RX:", stats_rec->rx_packets, pps,
-            stats_rec->rx_bytes / 1000, bps,
-            period);
-
-    packets = stats_rec->tx_packets - stats_prev->tx_packets;
-    pps = packets / period;
-
-    bytes = stats_rec->tx_bytes - stats_prev->tx_bytes;
-    bps = (bytes * 8) / period / 1000000;
-
-    printf (fmt, "       TX:", stats_rec->tx_packets, pps,
-            stats_rec->tx_bytes / 1000, bps,
-            period);
-
-    printf ("\n");
-}
-static void *stats_poll (void *arg)
-{
-    unsigned int interval = 2;
-    struct xsk_socket_info *xsk = arg;
-    static struct stats_record previous_stats = {0};
-
-    previous_stats.timestamp = get_time_ns ();
-
-    /* Trick to pretty printf with thousands separators use %' */
-    setlocale (LC_NUMERIC, "en_US");
-
-    while (!global_exit)
-    {
-        sleep (interval);
-        xsk->stats.timestamp = get_time_ns ();
-        stats_print (&xsk->stats, &previous_stats);
-        previous_stats = xsk->stats;
-    }
-    return NULL;
-}
-#endif
-
-//static void exit_application (int signal __unused)
-//{
-//    global_exit = true;
-//
-//    signal = signal; /* For compiler warning */
-//}
-
 int send_single_packet (const char *buf, const int buf_len, struct sockaddr_ll *addr __unused, void *aux)
 {
     struct xsk_socket_info *socket = (struct xsk_socket_info *) aux;
 
-    int ret;
-    uint32_t tx_idx = 0;
-
-    ret = xsk_ring_prod__reserve (&socket->tx, 1, &tx_idx);
-    if (ret != 1)
+    int ret = xsk_send_packet (socket, (uint64_t) buf, buf_len, false, true);
+    if (ret)
     {
-        /* No more transmit slots, drop the packet */
+        LOG (stderr, "Failed to send packet\n");
         return -1;
     }
-
-    xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->addr = xsk_alloc_umem_frame (socket);
-    xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->len = buf_len;
-    memcpy (xsk_umem__get_data (socket->umem->buffer, xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->addr), buf, buf_len);
-    xsk_ring_prod__submit (&socket->tx, 1);
-    socket->outstanding_tx++;
-
-    socket->stats.tx_bytes += buf_len;
-    socket->stats.tx_packets++;
-
-    complete_tx (socket);
-
-    //LOG (stdout, "Sent packet %d\n", packet_payload (buf)->id);
 
     return 0;
 }
@@ -665,19 +572,6 @@ int main (int argc __unused, char **argv __unused)
                  strerror (errno));
         exit (EXIT_FAILURE);
     }
-
-    /* Start thread to do statistics display */
-#if STATS_THREAD
-    ret = pthread_create (&stats_poll_thread, NULL, stats_poll,
-                          xsk_socket);
-    if (ret)
-    {
-        fprintf (stderr, "ERROR: Failed creating statistics thread "
-                         "\"%s\"\n",
-                 strerror (errno));
-        exit (EXIT_FAILURE);
-    }
-#endif
 
     if (!is_server)
     {
