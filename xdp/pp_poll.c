@@ -12,7 +12,8 @@ void usage (char *prog)
     fprintf (stderr, "Usage: %s <ifname> <action> [extra arguments]\n", prog);
     fprintf (stderr, "Actions:\n");
     fprintf (stderr, "\t- start: start the pingpong experiment\n");
-    fprintf (stderr, "\t         on the client, it requires extra arguments: <number of packets> <packets interval (ns)> <server IP>\n");
+    fprintf (stderr, "\t         on the server: %s <ifname> start <# of packets>\n", prog);
+    fprintf (stderr, "\t         on the client: %s <ifname> start <# of packets> <packets interval (ns)> <server IP>\n", prog);
     fprintf (stderr, "\t- remove: remove XDP program\n");
 }
 
@@ -63,6 +64,13 @@ inline int poll_next_payload (void *map_ptr, struct pingpong_payload *dest_paylo
         }
         curr_idx = (curr_idx + 1) % PACKETS_MAP_SIZE;
     }
+}
+
+int sock;
+
+int send_packet (const char *buf, const int buf_len __unused, struct sockaddr_ll *sock_addr, void *aux __unused)
+{
+    return send_pingpong_packet (sock, buf, sock_addr);
 }
 
 /**
@@ -140,7 +148,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
     }
     LOG (stdout, "OK\n");
 
-    int sock = setup_socket ();
+    sock = setup_socket ();
     if (sock < 0)
     {
         fprintf (stderr, "ERR: setup_socket failed\n");
@@ -159,7 +167,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
     if (!is_server)
     {
         LOG (stdout, "Starting sender thread... ");
-        start_sending_packets (sock, iters, interval, buf, &sock_addr);
+        start_sending_packets (iters, interval, buf, &sock_addr, send_packet, NULL);
         LOG (stdout, "OK\n");
     }
 
@@ -294,12 +302,11 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-
     if (strcmp (action, "start") == 0)
     {
         detach_pingpong_xdp (ifindex);// always try to detach first
 
-        if (argc != 4 && argc != 6) // argc=4 is server (./prog ifname start iters) argc=6 is client (./prog ifname start iters interval ip)
+        if (argc != 4 && argc != 6)// argc=4 is server (./prog ifname start iters) argc=6 is client (./prog ifname start iters interval ip)
         {
             usage (argv[0]);
             return EXIT_FAILURE;

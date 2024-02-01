@@ -51,7 +51,7 @@ int set_packet_payload (char *buf, struct pingpong_payload *payload);
  * @param buf the buffer containing the packet
  * @return a pointer to the payload inside the buffer
  */
-struct pingpong_payload *packet_payload (char *buf);
+struct pingpong_payload *packet_payload (const char *buf);
 
 /**
  * Build a sockaddr_ll structure with the given ifindex and destination mac address.
@@ -78,14 +78,14 @@ int send_pingpong_packet (int sock, const char *buf, struct sockaddr_ll *sock_ad
  * Start a thread to send the packets every `interval` microseconds.
  * The thread will send `iters` packets and then exit.
  *
- * @param sock the socket to use to send the packets
  * @param iters the number of packets to send
  * @param interval the interval between packets in microseconds
  * @param base_packet the base packet to send
  * @param sock_addr the sockaddr_ll structure to use to send the packets
+ * @param send_packet the function to use to send the packets, called by the sending thread.
  * @return 0 on success, -1 on failure
  */
-int start_sending_packets (int sock, uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr);
+int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, int (*send_packet) (const char *, const int, struct sockaddr_ll *, void *), void *aux);
 
 /**
  * Retrieve the local interface MAC address.
