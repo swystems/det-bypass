@@ -63,7 +63,7 @@ struct config {
     __u32 xdp_flags;
     int ifindex;
     char *ifname;
-    int iters;        // number of pingpong packet exchanges
+    uint32_t iters;        // number of pingpong packet exchanges
     uint64_t interval;// interval between two pingpong packet exchanges
     __u16 xsk_bind_flags;
     int xsk_if_queue;
@@ -273,6 +273,9 @@ static bool process_packet (struct xsk_socket_info *xsk,
         LOG (stderr, "Received non-pingpong packet\n");
         return false;
     }
+
+    if (payload->id >= cfg.iters)
+        global_exit = true;
 
     if (is_server)
     {
