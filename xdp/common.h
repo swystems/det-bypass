@@ -36,11 +36,20 @@
 #define PERROR(errno)
 #endif
 
+#define START_TIMER() uint64_t __start = get_time_ns ()
+#define STOP_TIMER()                             \
+    do                                           \
+    {                                            \
+        uint64_t __end = get_time_ns ();         \
+        printf ("Time: %lu\n", __end - __start); \
+        fflush (stdout);                         \
+    } while (0)
+
 #define TIME_CODE(code)                      \
     do                                       \
     {                                        \
         uint64_t start = get_time_ns ();     \
-        code;                                \
+        (code);                              \
         uint64_t end = get_time_ns ();       \
         printf ("Time: %lu\n", end - start); \
         fflush (stdout);                     \

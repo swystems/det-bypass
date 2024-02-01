@@ -29,10 +29,12 @@
 #include "src/utils.h"
 #include "src/xdp-loading.h"
 
+#define STATS_THREAD 0
 #define NUM_FRAMES 4096
 #define FRAME_SIZE XSK_UMEM__DEFAULT_FRAME_SIZE
 #define RX_BATCH_SIZE 64
 #define INVALID_UMEM_FRAME UINT64_MAX
+#define QUEUE_ID 0
 
 static struct xdp_program *prog;
 static const char *filename = "pingpong_xsk.o";
@@ -41,26 +43,43 @@ static const char *sec_name = "xdp";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong_xsk";
 static const char *mapname = "xsk_map";
 
+static bool is_server = false;
+
 //static const char *outfile = "pingpong.dat";
 
+void usage (char *prog)
+{
+    fprintf (stderr, "Usage: %s <ifname> <action> [extra arguments]\n", prog);
+    fprintf (stderr, "Actions:\n");
+    fprintf (stderr, "\t- start: start the pingpong experiment\n");
+    fprintf (stderr, "\t         on the server: %s <ifname> start <# of packets>\n", prog);
+    fprintf (stderr, "\t         on the client: %s <ifname> start <# of packets> <packets interval (ns)> <server IP>\n", prog);
+    fprintf (stderr, "\t- remove: remove XDP program\n");
+}
+
 int xsk_map_fd;
-bool custom_xsk = true;
 
 struct config {
     __u32 xdp_flags;
     int ifindex;
     char *ifname;
+    int iters;        // number of pingpong packet exchanges
+    uint64_t interval;// interval between two pingpong packet exchanges
     __u16 xsk_bind_flags;
     int xsk_if_queue;
     bool xsk_poll_mode;
 };
 
 struct config cfg = {
-    .ifindex = 4,
-    .ifname = "enp65s0f0np0",
-    .xsk_if_queue = 0,
+    .ifindex = 0,
+    .ifname = "",
+
+    .iters = 0,
+    .interval = 0,
+
+    .xsk_if_queue = QUEUE_ID,
     .xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST | XDP_FLAGS_DRV_MODE,
-    .xsk_bind_flags = XDP_USE_NEED_WAKEUP,
+    .xsk_bind_flags = 0,
     .xsk_poll_mode = false,
 };
 
@@ -139,7 +158,7 @@ static void xsk_free_umem_frame (struct xsk_socket_info *xsk, uint64_t frame)
     xsk->umem_frame_addr[xsk->umem_frame_free++] = frame;
 }
 
-static uint64_t xsk_umem_free_frames (struct xsk_socket_info *xsk)
+static __unused uint64_t xsk_umem_free_frames (struct xsk_socket_info *xsk)
 {
     return xsk->umem_frame_free;
 }
@@ -152,7 +171,6 @@ static struct xsk_socket_info *xsk_configure_socket (struct config *cfg,
     uint32_t idx;
     int i;
     int ret;
-    uint32_t prog_id;
 
     xsk_info = calloc (1, sizeof (*xsk_info));
     if (!xsk_info)
@@ -163,25 +181,16 @@ static struct xsk_socket_info *xsk_configure_socket (struct config *cfg,
     xsk_cfg.tx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
     xsk_cfg.xdp_flags = cfg->xdp_flags;
     xsk_cfg.bind_flags = cfg->xsk_bind_flags;
-    xsk_cfg.libbpf_flags = (custom_xsk) ? XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD : 0;
+    xsk_cfg.libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
     ret = xsk_socket__create (&xsk_info->xsk, cfg->ifname,
                               cfg->xsk_if_queue, umem->umem, &xsk_info->rx,
                               &xsk_info->tx, &xsk_cfg);
     if (ret)
         goto error_exit;
 
-    if (custom_xsk)
-    {
-        ret = xsk_socket__update_xskmap (xsk_info->xsk, xsk_map_fd);
-        if (ret)
-            goto error_exit;
-    }
-    else
-    {
-        /* Getting the program ID must be after the xdp_socket__create() call */
-        if (bpf_xdp_query_id (cfg->ifindex, cfg->xdp_flags, &prog_id))
-            goto error_exit;
-    }
+    ret = xsk_socket__update_xskmap (xsk_info->xsk, xsk_map_fd);
+    if (ret)
+        goto error_exit;
 
     /* Initialize umem frame allocation */
     for (i = 0; i < NUM_FRAMES; i++)
@@ -241,63 +250,79 @@ static void complete_tx (struct xsk_socket_info *xsk)
 static bool process_packet (struct xsk_socket_info *xsk,
                             uint64_t addr, uint32_t len)
 {
+    uint64_t receive_timestamp = get_time_ns ();
     uint8_t *pkt = xsk_umem__get_data (xsk->umem->buffer, addr);
-
-    /* Lesson#3: Write an IPv6 ICMP ECHO parser to send responses
-	 *
-	 * Some assumptions to make it easier:
-	 * - No VLAN handling
-	 * - Only if nexthdr is ICMP
-	 * - Just return all data with MAC/IP swapped, and type set to
-	 *   ICMPV6_ECHO_REPLY
-	 * - Recalculate the icmp checksum */
-
-    printf ("Received packet\n");
 
     int ret;
     uint32_t tx_idx = 0;
     uint8_t tmp_mac[ETH_ALEN];
-    struct in6_addr tmp_ip;
-    struct ethhdr *eth = (struct ethhdr *) pkt;
-    struct ipv6hdr *ipv6 = (struct ipv6hdr *) (eth + 1);
-    struct icmp6hdr *icmp = (struct icmp6hdr *) (ipv6 + 1);
+    uint32_t tmp_ip;
 
-    if (ntohs (eth->h_proto) != ETH_P_IPV6 || len < (sizeof (*eth) + sizeof (*ipv6) + sizeof (*icmp)) || ipv6->nexthdr != IPPROTO_ICMPV6 || icmp->icmp6_type != ICMPV6_ECHO_REQUEST)
-        return false;
-
-    memcpy (tmp_mac, eth->h_dest, ETH_ALEN);
-    memcpy (eth->h_dest, eth->h_source, ETH_ALEN);
-    memcpy (eth->h_source, tmp_mac, ETH_ALEN);
-
-    memcpy (&tmp_ip, &ipv6->saddr, sizeof (tmp_ip));
-    memcpy (&ipv6->saddr, &ipv6->daddr, sizeof (tmp_ip));
-    memcpy (&ipv6->daddr, &tmp_ip, sizeof (tmp_ip));
-
-    icmp->icmp6_type = ICMPV6_ECHO_REPLY;
-
-    /* Here we sent the packet out of the receive port. Note that
-     * we allocate one entry and schedule it. Your design would be
-     * faster if you do batch processing/transmission */
-
-    ret = xsk_ring_prod__reserve (&xsk->tx, 1, &tx_idx);
-    if (ret != 1)
+    if (len < sizeof (struct ethhdr) + sizeof (struct iphdr) + sizeof (struct pingpong_payload))
     {
-        /* No more transmit slots, drop the packet */
+        LOG (stderr, "Received packet is too small\n");
         return false;
     }
 
-    xsk_ring_prod__tx_desc (&xsk->tx, tx_idx)->addr = addr;
-    xsk_ring_prod__tx_desc (&xsk->tx, tx_idx)->len = len;
-    xsk_ring_prod__submit (&xsk->tx, 1);
-    xsk->outstanding_tx++;
+    struct ethhdr *eth = (struct ethhdr *) pkt;
+    struct iphdr *ip = (struct iphdr *) (eth + 1);
+    struct pingpong_payload *payload = packet_payload ((char *) pkt);
 
-    xsk->stats.tx_bytes += len;
-    xsk->stats.tx_packets++;
-    return true;
+    if (eth->h_proto != htons (ETH_P_PINGPONG))
+    {
+        LOG (stderr, "Received non-pingpong packet\n");
+        return false;
+    }
+
+    if (is_server)
+    {
+        //LOG (stdout, "Received ping with id %d, sending pong\n", payload->id);
+        // set ts[1] with arrival timestamp and ts[2] with send timestamp
+        payload->ts[1] = receive_timestamp;
+
+        // swap mac and ip addresses
+        memcpy (tmp_mac, eth->h_dest, ETH_ALEN);
+        memcpy (eth->h_dest, eth->h_source, ETH_ALEN);
+        memcpy (eth->h_source, tmp_mac, ETH_ALEN);
+
+        tmp_ip = ip->daddr;
+        ip->daddr = ip->saddr;
+        ip->saddr = tmp_ip;
+
+        payload->ts[2] = get_time_ns ();
+
+        /* Here we sent the packet out of the receive port. Note that
+     * we allocate one entry and schedule it. Your design would be
+     * faster if you do batch processing/transmission */
+
+        ret = xsk_ring_prod__reserve (&xsk->tx, 1, &tx_idx);
+        if (ret != 1)
+        {
+            /* No more transmit slots, drop the packet */
+            return false;
+        }
+        xsk_ring_prod__tx_desc (&xsk->tx, tx_idx)->addr = addr;
+        xsk_ring_prod__tx_desc (&xsk->tx, tx_idx)->len = len;
+
+        xsk_ring_prod__submit (&xsk->tx, 1);
+        xsk->outstanding_tx++;
+
+        xsk->stats.tx_bytes += len;
+        xsk->stats.tx_packets++;
+        return true;
+    }
+    else
+    {
+        payload->ts[3] = receive_timestamp;
+        //        LOG (stdout, "%d\n", payload->id);
+        LOG (stdout, "Packet %d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]);
+        return false;
+    }
 }
 
 static void handle_receive_packets (struct xsk_socket_info *xsk)
 {
+    //START_TIMER ();
     unsigned int rcvd, stock_frames, i;
     uint32_t idx_rx = 0, idx_fq = 0;
 
@@ -307,7 +332,7 @@ static void handle_receive_packets (struct xsk_socket_info *xsk)
 
     /* Stuff the ring with as much frames as possible */
     stock_frames = xsk_prod_nb_free (&xsk->umem->fq,
-                                     xsk_umem_free_frames (xsk));
+                                     1);
 
     if (stock_frames > 0)
     {
@@ -344,6 +369,8 @@ static void handle_receive_packets (struct xsk_socket_info *xsk)
 
     /* Do we need to wake up the kernel for transmission */
     complete_tx (xsk);
+
+    //STOP_TIMER ();
 }
 
 static void rx_and_process (struct config *cfg,
@@ -368,6 +395,7 @@ static void rx_and_process (struct config *cfg,
     }
 }
 
+#if STATS_THREAD
 static double calc_period (struct stats_record *r, struct stats_record *p)
 {
     double period_ = 0;
@@ -380,6 +408,7 @@ static double calc_period (struct stats_record *r, struct stats_record *p)
     return period_;
 }
 
+pthread_t stats_poll_thread;
 static void stats_print (struct stats_record *stats_rec,
                          struct stats_record *stats_prev)
 {
@@ -418,7 +447,6 @@ static void stats_print (struct stats_record *stats_rec,
 
     printf ("\n");
 }
-
 static void *stats_poll (void *arg)
 {
     unsigned int interval = 2;
@@ -439,10 +467,54 @@ static void *stats_poll (void *arg)
     }
     return NULL;
 }
+#endif
 
-static void exit_application (int signal __unused)
+//static void exit_application (int signal __unused)
+//{
+//    global_exit = true;
+//
+//    signal = signal; /* For compiler warning */
+//}
+
+int send_single_packet (const char *buf, const int buf_len, struct sockaddr_ll *addr __unused, void *aux)
 {
-    global_exit = true;
+    struct xsk_socket_info *socket = (struct xsk_socket_info *) aux;
+
+    int ret;
+    uint32_t tx_idx = 0;
+
+    ret = xsk_ring_prod__reserve (&socket->tx, 1, &tx_idx);
+    if (ret != 1)
+    {
+        /* No more transmit slots, drop the packet */
+        return -1;
+    }
+
+    xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->addr = xsk_alloc_umem_frame (socket);
+    xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->len = buf_len;
+    memcpy (xsk_umem__get_data (socket->umem->buffer, xsk_ring_prod__tx_desc (&socket->tx, tx_idx)->addr), buf, buf_len);
+    xsk_ring_prod__submit (&socket->tx, 1);
+    socket->outstanding_tx++;
+
+    socket->stats.tx_bytes += buf_len;
+    socket->stats.tx_packets++;
+
+    complete_tx (socket);
+
+    //LOG (stdout, "Sent packet %d\n", packet_payload (buf)->id);
+
+    return 0;
+}
+
+void initialize_client (const struct config *cfg, struct xsk_socket_info *socket, uint8_t *src_mac, uint8_t *dest_mac, uint32_t *src_ip, uint32_t *dest_ip)
+{
+    const int ifindex = cfg->ifindex;
+    char *base_packet = malloc (PACKET_SIZE);
+    build_base_packet (base_packet, src_mac, dest_mac, *src_ip, *dest_ip);
+
+    struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
+
+    start_sending_packets (cfg->iters, cfg->interval, base_packet, &sock_addr, send_single_packet, (void *) socket);
 }
 
 int main (int argc __unused, char **argv __unused)
@@ -452,10 +524,70 @@ int main (int argc __unused, char **argv __unused)
     uint64_t packet_buffer_size;
     struct xsk_umem_info *umem;
     struct xsk_socket_info *xsk_socket;
-    pthread_t stats_poll_thread;
 
     /* Global shutdown handler */
-    signal (SIGINT, exit_application);
+    //signal (SIGINT, exit_application);
+
+    if (argc < 3)
+    {
+        usage (argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    cfg.ifname = argv[1];
+    cfg.ifindex = if_nametoindex (cfg.ifname);
+    if (cfg.ifindex == 0)
+    {
+        fprintf (stderr, "ERROR: Interface %s not found\n", cfg.ifname);
+        return EXIT_FAILURE;
+    }
+
+    if (strcmp (argv[2], "remove") == 0)
+    {
+        struct bpf_object *obj = read_xdp_file (filename);
+        if (obj == NULL)
+        {
+            fprintf (stderr, "ERR: loading file: %s\n", filename);
+            return EXIT_FAILURE;
+        }
+
+        detach_xdp (obj, prog_name, cfg.ifindex, pinpath);
+        return EXIT_SUCCESS;
+    }
+    else if (strcmp (argv[2], "start") != 0)
+    {
+        usage (argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    if (argc != 4 && argc != 6)
+    {
+        usage (argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    if (argc == 6)
+    {
+        is_server = false;
+    }
+    else
+    {
+        is_server = true;
+    }
+
+    cfg.iters = atoi (argv[3]);
+    char *server_ip = NULL;
+    if (!is_server)
+    {
+        cfg.interval = atol (argv[4]);
+        server_ip = argv[5];
+    }
+
+    uint8_t src_mac[ETH_ALEN];
+    uint32_t src_ip;
+    uint8_t dest_mac[ETH_ALEN];
+    uint32_t dest_ip;
+    exchange_addresses (cfg.ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
 
     /* Required option */
     if (cfg.ifindex == -1)
@@ -532,7 +664,7 @@ int main (int argc __unused, char **argv __unused)
     }
 
     /* Start thread to do statistics display */
-#if DEBUG
+#if STATS_THREAD
     ret = pthread_create (&stats_poll_thread, NULL, stats_poll,
                           xsk_socket);
     if (ret)
@@ -543,6 +675,11 @@ int main (int argc __unused, char **argv __unused)
         exit (EXIT_FAILURE);
     }
 #endif
+
+    if (!is_server)
+    {
+        initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
+    }
 
     /* Receive and count packets than drop them */
     rx_and_process (&cfg, xsk_socket);
