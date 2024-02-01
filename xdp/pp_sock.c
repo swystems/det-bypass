@@ -1,27 +1,29 @@
+/**
+ * Pingpong experiment using AF_XDP sockets for kernel bypass.
+ *
+ * This program is adapted from the following file in the xdp-tutorial repository:
+ * https://github.com/xdp-project/xdp-tutorial/blob/master/advanced03-AF_XDP/af_xdp_user.c
+ * Credits to the original authors.
+ *
+ * The program functionality has been deeply modified to support the pingpong experiment and integrate with the rest of the code.
+ */
 #include <assert.h>
 #include <errno.h>
-#include <getopt.h>
-#include <locale.h>
 #include <poll.h>
 #include <pthread.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 #include <sys/resource.h>
 
-#include <bpf/bpf.h>
 #include <xdp/libxdp.h>
 #include <xdp/xsk.h>
 
 #include <arpa/inet.h>
-#include <linux/icmpv6.h>
 #include <linux/if_ether.h>
 #include <linux/if_link.h>
-#include <linux/ipv6.h>
 #include <net/if.h>
 
 #include "common.h"
@@ -37,16 +39,24 @@
 #define QUEUE_ID 0
 
 static struct xdp_program *prog;
+
+// Information about the XDP program.
 static const char *filename = "pingpong_xsk.o";
 static const char *prog_name = "xdp_xsk";
 static const char *sec_name = "xdp";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong_xsk";
 static const char *mapname = "xsk_map";
 
+// Whether the current machine is the server or the client in the experiment.
 static bool is_server = false;
 
 //static const char *outfile = "pingpong.dat";
 
+/**
+ * Prints instructions on how to use the program.
+ *
+ * @param prog the command that was run to execute the program.
+ */
 void usage (char *prog)
 {
     fprintf (stderr, "Usage: %s <ifname> <action> [extra arguments]\n", prog);
@@ -57,30 +67,15 @@ void usage (char *prog)
     fprintf (stderr, "\t- remove: remove XDP program\n");
 }
 
-int xsk_map_fd;
-
 struct config {
     __u32 xdp_flags;
     int ifindex;
     char *ifname;
-    uint32_t iters;        // number of pingpong packet exchanges
+    uint32_t iters;   // number of pingpong packet exchanges
     uint64_t interval;// interval between two pingpong packet exchanges
     __u16 xsk_bind_flags;
     int xsk_if_queue;
     bool xsk_poll_mode;
-};
-
-struct config cfg = {
-    .ifindex = 0,
-    .ifname = "",
-
-    .iters = 0,
-    .interval = 0,
-
-    .xsk_if_queue = QUEUE_ID,
-    .xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST | XDP_FLAGS_DRV_MODE,
-    .xsk_bind_flags = 0,
-    .xsk_poll_mode = false,
 };
 
 struct xsk_umem_info {
@@ -101,14 +96,41 @@ struct xsk_socket_info {
     uint32_t outstanding_tx;
 };
 
-static inline __u32 xsk_ring_prod__free (struct xsk_ring_prod *r)
-{
-    r->cached_cons = *r->consumer + r->size;
-    return r->cached_cons - r->cached_prod;
-}
+// File descriptor of the BPF_MAP_TYPE_XSKMAP used to receive packets from the XDP program.
+int xsk_map_fd;
 
+// Whether the program should exit.
 static volatile bool global_exit;
 
+// Initial configuration of the program. Some of the fields are overridden by the command line arguments.
+struct config cfg = {
+    .ifindex = 0,
+    .ifname = "",
+
+    .iters = 0,
+    .interval = 0,
+
+    .xsk_if_queue = QUEUE_ID,
+    .xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST | XDP_FLAGS_DRV_MODE,
+    .xsk_bind_flags = 0,
+    .xsk_poll_mode = false,
+};
+
+/**
+ * Configure the UMEM.
+ *
+ * This is the shared memory area between the kernel and the user space used to exchange packets.
+ * The UMEM is divided in frames of size FRAME_SIZE. Each frame works as a buffer. The kernel will write packets into
+ * the frames and the user space will read them.
+ *
+ * The UMEM is associated with two rings: the fill ring and completion ring.
+ * For more information on UMEM and the rings, see the following links:
+ * - https://www.kernel.org/doc/html/next/networking/af_xdp.html#umem
+ *
+ * @param buffer the buffer to use for the UMEM.
+ * @param size the size of the buffer.
+ * @return a pointer to the UMEM information structure.
+ */
 static struct xsk_umem_info *configure_xsk_umem (void *buffer, uint64_t size)
 {
     struct xsk_umem_info *umem;
@@ -130,6 +152,15 @@ static struct xsk_umem_info *configure_xsk_umem (void *buffer, uint64_t size)
     return umem;
 }
 
+/**
+ * Allocate a frame from the UMEM. This is a pointer to a buffer of size FRAME_SIZE.
+ * The frame is allocated from the UMEM frames that are not currently in use.
+ * If there are no frames available, INVALID_UMEM_FRAME is returned.
+ * The frame is marked as in use and must be freed with xsk_free_umem_frame.
+ *
+ * @param xsk the socket information structure.
+ * @return the address of the allocated frame or INVALID_UMEM_FRAME if no frame is available.
+ */
 static uint64_t xsk_alloc_umem_frame (struct xsk_socket_info *xsk)
 {
     uint64_t frame;
@@ -141,6 +172,12 @@ static uint64_t xsk_alloc_umem_frame (struct xsk_socket_info *xsk)
     return frame;
 }
 
+/**
+ * Free a frame from the UMEM.
+ *
+ * @param xsk the socket information structure.
+ * @param frame the address of the frame to free.
+ */
 static void xsk_free_umem_frame (struct xsk_socket_info *xsk, uint64_t frame)
 {
     assert (xsk->umem_frame_free < NUM_FRAMES);
@@ -148,11 +185,27 @@ static void xsk_free_umem_frame (struct xsk_socket_info *xsk, uint64_t frame)
     xsk->umem_frame_addr[xsk->umem_frame_free++] = frame;
 }
 
-static __unused uint64_t xsk_umem_free_frames (struct xsk_socket_info *xsk)
+/**
+ * Get the number of free frames in the UMEM.
+ *
+ * @param xsk the socket information structure.
+ * @return the number of free frames.
+ */
+static uint64_t xsk_umem_free_frames (struct xsk_socket_info *xsk)
 {
     return xsk->umem_frame_free;
 }
 
+/**
+ * Configure the AF_XDP socket, which is used to send and receive packets.
+ * The socket is associated with two rings: the receive ring and the transmit ring.
+ * For more information on the rings, see the following links:
+ * - https://www.kernel.org/doc/html/next/networking/af_xdp.html#rings
+ *
+ * @param cfg the configuration of the program.
+ * @param umem the UMEM information structure.
+ * @return a pointer to the socket information structure.
+ */
 static struct xsk_socket_info *xsk_configure_socket (struct config *cfg,
                                                      struct xsk_umem_info *umem)
 {
@@ -210,6 +263,17 @@ error_exit:
     return NULL;
 }
 
+/**
+ * Complete the transmission of submitted packets.
+ *
+ * When the userspace application sends packets, they are not immediately sent to the network interface.
+ * This allows to queue multiple packets to then be sent in a single batch, increasing performance.
+ * This function completes the submission of the pending packets, sending them to the network interface using
+ * the sendto system call.
+ * After the packets are sent, the function frees the frames used by the packets.
+ *
+ * @param xsk the socket information structure.
+ */
 static void complete_tx (struct xsk_socket_info *xsk)
 {
     unsigned int completed;
@@ -237,6 +301,25 @@ static void complete_tx (struct xsk_socket_info *xsk)
     }
 }
 
+/**
+ * Submit a packet for transmission to the AF_XDP socket. If complete is true, the packet will be immediately sent.
+ *
+ * The submission of a packet using AF_XDP sockets happens in 4 steps:
+ * - Reserve a slot in the transmission ring.
+ * - If needed, reserve a frame in the UMEM and copy the packet into it.
+ * - Associate the transmission ring slot with the frame.
+ * - Submit the packet for transmission, notifying the kernel.
+ *
+ * The advantage of having this pointer-based approach in the rings is that the packet might not even need to be copied:
+ * if it is already in the UMEM, the frame can be directly associated with the transmission ring slot.
+ *
+ * @param socket the socket information structure.
+ * @param addr the address of the packet to send.
+ * @param len the length of the packet.
+ * @param is_umem_frame whether the packet is already in the UMEM or not.
+ * @param complete whether the packet should be immediately sent.
+ * @return 0 if the packet was successfully submitted, -1 otherwise.
+ */
 static int xsk_send_packet (struct xsk_socket_info *socket, uint64_t addr, uint32_t len, bool is_umem_frame, bool complete)
 {
     int ret;
@@ -270,6 +353,14 @@ static int xsk_send_packet (struct xsk_socket_info *socket, uint64_t addr, uint3
     return 0;
 }
 
+/**
+ * Process the packet located at the given address.
+ *
+ * @param xsk the socket information structure.
+ * @param addr the UMEM address of the packet.
+ * @param len the length of the packet.
+ * @return true if the packet will be sent back, i.e. the UMEM frame must be kept; false otherwise.
+ */
 static bool process_packet (struct xsk_socket_info *xsk,
                             uint64_t addr, uint32_t len)
 {
@@ -316,20 +407,27 @@ static bool process_packet (struct xsk_socket_info *xsk,
         payload->ts[2] = get_time_ns ();
 
         /* Here we sent the packet out of the receive port. Note that
-     * we allocate one entry and schedule it. Your design would be
-     * faster if you do batch processing/transmission */
+         * we allocate one entry and schedule it. Your design would be
+         * faster if you do batch processing/transmission */
         xsk_send_packet (xsk, addr, len, true, false);
-        return true;
+        return true;// the packet is queued for transmission, so we must keep the frame
     }
     else
     {
         payload->ts[3] = receive_timestamp;
-        //        LOG (stdout, "%d\n", payload->id);
         LOG (stdout, "Packet %d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]);
-        return false;
+        return false;// the packet has no reason to be kept
     }
 }
 
+/**
+ * Handle the reception of packets.
+ *
+ * Check if there is any available packet to be processed by checking the receive ring.
+ * If there are packets available, process them.
+ *
+ * @param xsk the socket information structure.
+ */
 static void handle_receive_packets (struct xsk_socket_info *xsk)
 {
     //START_TIMER ();
@@ -340,13 +438,18 @@ static void handle_receive_packets (struct xsk_socket_info *xsk)
     if (!rcvd)
         return;
 
-    /* Stuff the ring with as much frames as possible */
+    /*
+     * Not sure about this instruction and the if block.
+     * Without it, the send stops after 2048 packets, i.e. it must be related about the available
+     * number of frames in the UMEM/elements in the rings.
+     *
+     * If only the libxdp functions were a bit more documented...
+     */
     stock_frames = xsk_prod_nb_free (&xsk->umem->fq,
-                                     1);
+                                     xsk_umem_free_frames (xsk));
 
     if (stock_frames > 0)
     {
-
         unsigned int ret = xsk_ring_prod__reserve (&xsk->umem->fq, stock_frames,
                                                    &idx_fq);
 
@@ -380,6 +483,14 @@ static void handle_receive_packets (struct xsk_socket_info *xsk)
     //STOP_TIMER ();
 }
 
+/**
+ * Keeps polling for new packets and, if available, process them.
+ * This function can either use a busy-wait or a blocking poll.
+ * The busy-wait is the default behavior.
+ *
+ * @param cfg the configuration of the program.
+ * @param xsk_socket the socket information structure.
+ */
 static void rx_and_process (struct config *cfg,
                             struct xsk_socket_info *xsk_socket)
 {
@@ -402,7 +513,17 @@ static void rx_and_process (struct config *cfg,
     }
 }
 
-int send_single_packet (const char *buf, const int buf_len, struct sockaddr_ll *addr __unused, void *aux)
+/**
+ * Send a pingpong packet to the server.
+ * This function is called by the send thread every cfg.interval nanoseconds.
+ *
+ * @param buf the buffer containing the packet to send.
+ * @param buf_len the length of the packet.
+ * @param addr the socket address of the server.
+ * @param aux the socket information structure.
+ * @return 0 if the packet was successfully sent, -1 otherwise.
+ */
+int client_send_pp_packet (const char *buf, const int buf_len, struct sockaddr_ll *addr __unused, void *aux)
 {
     struct xsk_socket_info *socket = (struct xsk_socket_info *) aux;
 
@@ -416,6 +537,16 @@ int send_single_packet (const char *buf, const int buf_len, struct sockaddr_ll *
     return 0;
 }
 
+/**
+ * Initialize the client functionality, i.e. start sending pingpong packets to the server.
+ *
+ * @param cfg the configuration of the program.
+ * @param socket the socket information structure.
+ * @param src_mac the MAC address of the client.
+ * @param dest_mac the MAC address of the server.
+ * @param src_ip the IP address of the client.
+ * @param dest_ip the IP address of the server.
+ */
 void initialize_client (const struct config *cfg, struct xsk_socket_info *socket, uint8_t *src_mac, uint8_t *dest_mac, uint32_t *src_ip, uint32_t *dest_ip)
 {
     const int ifindex = cfg->ifindex;
@@ -424,7 +555,7 @@ void initialize_client (const struct config *cfg, struct xsk_socket_info *socket
 
     struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
 
-    start_sending_packets (cfg->iters, cfg->interval, base_packet, &sock_addr, send_single_packet, (void *) socket);
+    start_sending_packets (cfg->iters, cfg->interval, base_packet, &sock_addr, client_send_pp_packet, (void *) socket);
 }
 
 int main (int argc __unused, char **argv __unused)
@@ -434,9 +565,6 @@ int main (int argc __unused, char **argv __unused)
     uint64_t packet_buffer_size;
     struct xsk_umem_info *umem;
     struct xsk_socket_info *xsk_socket;
-
-    /* Global shutdown handler */
-    //signal (SIGINT, exit_application);
 
     if (argc < 3)
     {
@@ -464,7 +592,7 @@ int main (int argc __unused, char **argv __unused)
         detach_xdp (obj, prog_name, cfg.ifindex, pinpath);
         return EXIT_SUCCESS;
     }
-    else if (strcmp (argv[2], "start") != 0)
+    else if (strcmp (argv[2], "start") != 0)// if it's not "remove" or "start"
     {
         usage (argv[0]);
         return EXIT_FAILURE;
@@ -476,14 +604,7 @@ int main (int argc __unused, char **argv __unused)
         return EXIT_FAILURE;
     }
 
-    if (argc == 6)
-    {
-        is_server = false;
-    }
-    else
-    {
-        is_server = true;
-    }
+    is_server = argc == 4;
 
     cfg.iters = atoi (argv[3]);
     char *server_ip = NULL;
@@ -498,13 +619,6 @@ int main (int argc __unused, char **argv __unused)
     uint8_t dest_mac[ETH_ALEN];
     uint32_t dest_ip;
     exchange_addresses (cfg.ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
-
-    /* Required option */
-    if (cfg.ifindex == -1)
-    {
-        fprintf (stderr, "ERROR: Required option --dev missing\n\n");
-        return EXIT_FAILURE;
-    }
 
     struct bpf_object *obj = read_xdp_file (filename);
     if (obj == NULL)
