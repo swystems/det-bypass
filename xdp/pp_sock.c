@@ -691,7 +691,7 @@ int main (int argc __unused, char **argv __unused)
 
     if (!is_server)
     {
-        persistence_agent = persistence_init (outfile, 0);
+        persistence_agent = persistence_init (outfile, PERSISTENCE_F_MIN_MAX_LATENCY);
         initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
     }
 

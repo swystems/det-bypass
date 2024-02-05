@@ -8,33 +8,45 @@
 #include <stdlib.h>
 #include <sys/queue.h>
 
-enum persistence_flags {
-    // Use a threaded persistence agent
-    PERS_F_THREADED = (1 << 1),
+enum persistence_output_flags {
+    PERSISTENCE_F_FILE = 1 << 0,
+    PERSISTENCE_F_STDOUT = 1 << 1,
+};
+
+/**
+ * Flags defining what should be persisted.
+ */
+enum persistence_data_flags {
+    // Store all rounds timestamps. Default option.
+    PERSISTENCE_F_ALL_TIMESTAMPS = 1 << 2,
+    // Store rounds with minimum and maximum latency
+    PERSISTENCE_F_MIN_MAX_LATENCY = 1 << 3,
+    // TODO: Store rounds in buckets
+    PERSISTENCE_F_BUCKETS = 1 << 4,
+};
+
+struct min_max_latency_data {
+    uint64_t min;
+    uint64_t max;
+    struct pingpong_payload min_payload;
+    struct pingpong_payload max_payload;
 };
 
 /**
  * Data used by a base file persistence agent.
  */
 typedef struct pers_base_data {
+    // Output stream to write to
     FILE *file;
-} pers_base_data_t;
 
-/**
- * Data used by a threaded persistence agent.
- *
- * The file pointer must be the first element of the struct to allow casting
- * to pers_base_data_t.
- */
-typedef struct pers_data_threaded {
-    FILE *file;
-    pthread_t thread;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-    bool has_data;
-    struct pingpong_payload payload;
-    volatile bool stop;
-} pers_data_threaded_t;
+    /**
+     * Auxiliary data, depending on the flags.
+     * - PERSISTENCE_F_ALL_TIMESTAMPS: NULL
+     * - PERSISTENCE_F_MIN_MAX_LATENCY: struct min_max_latency_data
+     * - PERSISTENCE_F_BUCKETS: struct bucket_data
+     */
+    void *aux;
+} pers_base_data_t;
 
 /**
  * "Persistence agent" to be used to store information about the pingpong measurements.
@@ -45,6 +57,11 @@ typedef struct persistence_agent {
      * This pointer is owned by the persistence agent and should not be freed by the user.
      */
     pers_base_data_t *data;
+
+    /**
+     * Flags passed to the initialization function.
+     */
+    int flags;
 
     /**
      * Write data to the persistence agent.

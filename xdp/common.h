@@ -114,7 +114,12 @@ inline struct pingpong_payload empty_pingpong_payload ()
  * @param payload the payload to check
  * @return 1 if the payload is valid, 0 otherwise
  */
-inline __u32 valid_pingpong_payload (struct pingpong_payload *payload)
+inline __u32 valid_pingpong_payload (const struct pingpong_payload *payload)
 {
     return payload->magic == PINGPONG_MAGIC;
+}
+
+inline __u64 compute_latency (const struct pingpong_payload *payload)
+{
+    return ((payload->ts[3] - payload->ts[0]) - (payload->ts[2] - payload->ts[1])) / 2;
 }
