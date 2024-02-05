@@ -28,6 +28,7 @@
 
 #include "common.h"
 #include "src/net.h"
+#include "src/persistence.h"
 #include "src/utils.h"
 #include "src/xdp-loading.h"
 
@@ -50,7 +51,8 @@ static const char *mapname = "xsk_map";
 // Whether the current machine is the server or the client in the experiment.
 static bool is_server = false;
 
-//static const char *outfile = "pingpong.dat";
+static const char *outfile = "pingpong_xsk.dat";
+static persistence_agent_t *persistence_agent;
 
 /**
  * Prints instructions on how to use the program.
@@ -415,7 +417,7 @@ static bool process_packet (struct xsk_socket_info *xsk,
     else
     {
         payload->ts[3] = receive_timestamp;
-        LOG (stdout, "Packet %d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]);
+        persistence_agent->write (persistence_agent, payload);
         return false;// the packet has no reason to be kept
     }
 }
@@ -689,6 +691,7 @@ int main (int argc __unused, char **argv __unused)
 
     if (!is_server)
     {
+        persistence_agent = persistence_init (outfile, 0);
         initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
     }
 
@@ -698,6 +701,9 @@ int main (int argc __unused, char **argv __unused)
     /* Cleanup */
     xsk_socket__delete (xsk_socket->xsk);
     xsk_umem__delete (umem->umem);
+
+    if (!is_server)
+        persistence_agent->close (persistence_agent);
 
     return EXIT_SUCCESS;
 }
