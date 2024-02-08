@@ -4,6 +4,7 @@
 #include <inttypes.h>
 #include <malloc.h>
 #include <netdb.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +18,7 @@
 #include "../../common/common.h"
 #include "../../common/net.h"
 #include "../../common/persistence.h"
-#include "ccan/minmax.h"
+//#include "ccan/minmax.h"
 #include "src/ib_net.h"
 #include "src/pingpong.h"
 
@@ -45,9 +46,11 @@ enum {
 };
 
 static int page_size;
+static int available_recv;
+static persistence_agent_t *persistence;
 
 struct pingpong_context {
-    int pending;// WID of the pending WR
+    atomic_uint_fast8_t pending;// WID of the pending WR
 
     int send_flags;
 
@@ -68,9 +71,9 @@ struct pingpong_context {
     struct ibv_qp_ex *qpx;
 };
 
-static struct pingpong_context *pp_init_context (struct ibv_device *dev)
+struct pingpong_context *pp_init_context (struct ibv_device *dev)
 {
-    struct pingpong_context *ctx = malloc (sizeof (*ctx));
+    struct pingpong_context *ctx = malloc (sizeof (struct pingpong_context));
     if (!ctx)
     {
         return NULL;
@@ -78,14 +81,14 @@ static struct pingpong_context *pp_init_context (struct ibv_device *dev)
 
     ctx->send_flags = IBV_SEND_SIGNALED;
 
-    ctx->buf = memalign (page_size, size);
+    ctx->buf = memalign (page_size, PACKET_SIZE);
     if (!ctx->buf)
     {
         LOG (stdout, "Couldn't allocate work buf.\n");
         goto clean_ctx;
     }
 
-    memset (ctx->buf, 0, size);
+    memset (ctx->buf, 0, PACKET_SIZE);
 
     ctx->context = ibv_open_device (dev);
     if (!ctx->context)
@@ -103,7 +106,6 @@ static struct pingpong_context *pp_init_context (struct ibv_device *dev)
 
     // Using Timestamping
     {
-        const uint32_t rc_caps_mask = IBV_ODP_SUPPORT_SEND | IBV_ODP_SUPPORT_RECV;
         struct ibv_device_attr_ex attrx;
         if (ibv_query_device_ex (ctx->context, NULL, &attrx))
         {
@@ -119,7 +121,7 @@ static struct pingpong_context *pp_init_context (struct ibv_device *dev)
         ctx->completion_timestamp_mask = attrx.completion_timestamp_mask;
     }
 
-    ctx->mr = ibv_reg_mr (ctx->pd, ctx->buf, size, IBV_ACCESS_LOCAL_WRITE);
+    ctx->mr = ibv_reg_mr (ctx->pd, ctx->buf, PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
     if (!ctx->mr)
     {
         LOG (stdout, "Couldn't register MR.\n");
@@ -203,7 +205,45 @@ clean_ctx:
     return NULL;
 }
 
-static int pp_ib_connect (struct pingpong_context *ctx, int port, int local_psn, enum ibv_mtu mtu, int sl, struct ib_node_info *dest, int gid_idx)
+int pp_close_context (struct pingpong_context *ctx)
+{
+    if (ibv_destroy_qp (ctx->qp))
+    {
+        LOG (stdout, "Failed to destroy QP.\n");
+        return 1;
+    }
+
+    if (ibv_destroy_cq ((struct ibv_cq *) ctx->cq))
+    {
+        LOG (stdout, "Failed to destroy CQ.\n");
+        return 1;
+    }
+
+    if (ibv_dereg_mr (ctx->mr))
+    {
+        LOG (stdout, "Failed to deregister MR.\n");
+        return 1;
+    }
+
+    if (ibv_dealloc_pd (ctx->pd))
+    {
+        LOG (stdout, "Failed to deallocate PD.\n");
+        return 1;
+    }
+
+    if (ibv_close_device (ctx->context))
+    {
+        LOG (stdout, "Failed to close device.\n");
+        return 1;
+    }
+
+    free (ctx->buf);
+    free (ctx);
+
+    return 0;
+}
+
+int pp_ib_connect (struct pingpong_context *ctx, int port, int local_psn, enum ibv_mtu mtu, int sl, struct ib_node_info *dest, int gid_idx)
 {
     struct ibv_qp_attr attr = {
         .qp_state = IBV_QPS_RTR,
@@ -248,23 +288,37 @@ static int pp_ib_connect (struct pingpong_context *ctx, int port, int local_psn,
     return 0;
 }
 
-static int pp_post_send (struct pingpong_context *ctx)
+int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
 {
     ibv_wr_start (ctx->qpx);
     ctx->qpx->wr_id = PINGPONG_SEND_WRID;
     ctx->qpx->wr_flags = ctx->send_flags;
 
     ibv_wr_send (ctx->qpx);
-    ibv_wr_set_sge (ctx->qpx, ctx->mr->lkey, PACKET_SIZE, (uintptr_t) ctx->buf);
-    return ibv_wr_complete (ctx->qpx);
+
+    const uintptr_t buf = buffer == NULL ? (uintptr_t) ctx->payload : (uintptr_t) buffer;
+
+    ibv_wr_set_sge (ctx->qpx, ctx->mr->lkey, PACKET_SIZE, buf);
+    int ret = ibv_wr_complete (ctx->qpx);
+    if (ret)
+    {
+        LOG (stdout, "Failed to post send.\n");
+        return ret;
+    }
+
+    ctx->pending |= PINGPONG_SEND_WRID;
+    return 0;
 }
 
-int pp_send_single_packet (const char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+int pp_send_single_packet (const char *buf, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
+    struct pingpong_payload *payload = (struct pingpong_payload *) buf;
+    *payload = new_pingpong_payload (packet_id);
+    payload->ts[1] = get_time_ns ();
+
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
-    ctx->payload = new_pingpong_payload (packet_id);
-    ctx->payload->ts[0] = get_time_ns ();
-    return pp_post_send (ctx);
+
+    return pp_post_send (ctx, (const uint8_t *) buf);
 }
 
 static int pp_post_recv (struct pingpong_context *ctx, int n)
@@ -287,6 +341,55 @@ static int pp_post_recv (struct pingpong_context *ctx, int n)
             break;
 
     return i;
+}
+
+int parse_single_wc (struct pingpong_context *ctx, const bool is_server)
+{
+    const enum ibv_wc_status status = ctx->cq->status;
+    const uint64_t wr_id = ctx->cq->wr_id;
+    const uint64_t ts = ibv_wc_read_completion_ts (ctx->cq);
+
+    if (status != IBV_WC_SUCCESS)
+    {
+        LOG (stdout, "Failed status %d for wr_id %lu\n", status, wr_id);
+        return 1;
+    }
+
+    switch (wr_id)
+    {
+    case PINGPONG_SEND_WRID:
+        break;
+    case PINGPONG_RECV_WRID:
+        if (is_server)
+        {
+            ctx->payload->ts[1] = ts;
+            ctx->payload->ts[2] = get_time_ns ();
+            // In this case, using the ctx->buf is safe because the server has no send thread concurrently accessing it.
+            pp_post_send (ctx, ctx->buf);
+        }
+        else
+        {
+            ctx->payload->ts[3] = get_time_ns ();
+            persistence->write (persistence, ctx->payload);
+        }
+        if (--available_recv <= 1)
+        {
+            available_recv += pp_post_recv (ctx, RECEIVE_DEPTH - available_recv);
+            if (available_recv <= RECEIVE_DEPTH)
+            {
+                LOG (stdout, "Couldn't post enough receives\n");
+                return 1;
+            }
+        }
+        break;
+    default:
+        LOG (stdout, "Completion for unknown wr_id %lu\n", wr_id);
+        return 1;
+    }
+
+    ctx->pending &= ~wr_id;
+
+    return 0;
 }
 
 int main (int argc, char **argv)
@@ -338,12 +441,6 @@ int main (int argc, char **argv)
         return 1;
     }
 
-    if (pp_get_port_info (ctx->context, IB_PORT, &ctx->portinfo))
-    {
-        fprintf (stderr, "Couldn't get port info\n");
-        return 1;
-    }
-
     struct ib_node_info local_info;
     if (ib_get_local_info (ctx->context, IB_PORT, port_gid_idx, ctx->qp, &local_info))
     {
@@ -363,14 +460,89 @@ int main (int argc, char **argv)
     fflush (stdout);
     ib_print_node_info (&remote_info);
 
-    pp_ib_connect (ctx, IB_PORT, local_info.psn, IB_MTU, PRIORITY, remote_info, port_gid_idx);
+    if (!is_server)// only client needs to print
+    {
+        persistence = persistence_init ("rc_pingpong.dat", PERSISTENCE_F_FILE);
+        if (!persistence)
+        {
+            fprintf (stderr, "Couldn't initialize persistence agent\n");
+            return 1;
+        }
+    }
+
+    pp_ib_connect (ctx, IB_PORT, local_info.psn, IB_MTU, PRIORITY, &remote_info, port_gid_idx);
 
     ctx->pending = PINGPONG_RECV_WRID;
 
+    available_recv = pp_post_recv (ctx, RECEIVE_DEPTH);
+
+    uint8_t *send_buffer = NULL;
     if (!is_server)
     {
-        // TODO change start_sending_packets to not modify the buffer, but just call the send_packet function passing
-        // the next packet id. In XDP, the function will have to write in the buffer, in RDMA nothing will happen basically.
-        start_sending_packets (iters, interval, (char *) ctx->buf, NULL, pp_send_single_packet, ctx);
+        // Buffer used to send packets.
+        // ctx->buf is not used because otherwise it would be used concurrently by the sending thread and the main thread.
+        send_buffer = (uint8_t *) malloc (PACKET_SIZE);
+        if (!send_buffer)
+        {
+            fprintf (stderr, "Couldn't allocate send_bufferfer\n");
+            return 1;
+        }
+
+        start_sending_packets (iters, interval, (char *) send_buffer, NULL, pp_send_single_packet, ctx);
     }
+
+    uint32_t recv_count, send_count;
+    recv_count = send_count = 0;
+
+    while (recv_count < iters)
+    {
+        int ret;
+        struct ibv_poll_cq_attr attr;
+        do
+        {
+            ret = ibv_start_poll (ctx->cq, &attr);
+        } while (ret == ENOENT);
+
+        if (ret)
+        {
+            LOG (stdout, "Failed to poll CQ\n");
+            return 1;
+        }
+
+        ret = parse_single_wc (ctx, is_server);
+        if (ret)
+        {
+            LOG (stdout, "Failed to parse WC\n");
+            ibv_end_poll (ctx->cq);
+            return 1;
+        }
+        recv_count++;
+        ret = ibv_next_poll (ctx->cq);
+        if (!ret)
+        {
+            ret = parse_single_wc (ctx, is_server);
+            if (!ret)
+                ++recv_count;
+        }
+        ibv_end_poll (ctx->cq);
+        if (ret && ret != ENOENT)
+        {
+            LOG (stdout, "Failed to poll CQ\n");
+            return 1;
+        }
+    }
+
+    if (pp_close_context (ctx))
+    {
+        fprintf (stderr, "Couldn't close context\n");
+        return 1;
+    }
+
+    if (persistence)
+        persistence->close (persistence);
+
+    if (send_buffer)
+        free (send_buffer);
+
+    return 0;
 }

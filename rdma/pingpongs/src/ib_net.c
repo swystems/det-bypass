@@ -30,7 +30,7 @@ struct ibv_device *ib_device_find_by_name (const char *name)
 int ib_get_local_info (struct ibv_context *restrict context, int ib_port, int gidx, struct ibv_qp *restrict qp, struct ib_node_info *restrict out)
 {
     struct ibv_port_attr port_info;
-    if (pp_get_port_info (context, IB_PORT, &port_info))
+    if (ibv_query_port (context, ib_port, &port_info))
     {
         fprintf (stderr, "Couldn't get port info\n");
         return 1;
@@ -53,5 +53,5 @@ void ib_print_node_info (struct ib_node_info *info)
 {
     char gid_str[33];
     inet_ntop (AF_INET6, &info->gid, gid_str, sizeof (gid_str));
-    printf ("Address:  LID 0x%04x, QPN 0x%06x, PSN 0x%06x, GID %s\n", my_dest.lid, my_dest.qpn, my_dest.psn,
+    printf ("Address:  LID 0x%04x, QPN 0x%06x, PSN 0x%06x, GID %s\n", info->lid, info->qpn, info->psn, gid_str);
 }

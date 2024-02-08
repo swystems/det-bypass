@@ -15,6 +15,7 @@ add_custom_target(pingpong_xsk
 link_libraries(bpf xdp)
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -g -Wall -Werror -Wextra -Wpedantic")
+
 if (NOT DEBUG)
     set(DEBUG 0)
 endif ()

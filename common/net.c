@@ -152,17 +152,15 @@ int exchange_data (const char *server_ip, bool is_server, uint32_t packet_size, 
     else
     {
         memset (out_buffer, 0, packet_size);
-        ret = recvfrom (sock, out_buffer, packet_size, 0, NULL, NULL);
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_len = sizeof (struct sockaddr_in);
+
+        ret = recvfrom (sock, out_buffer, packet_size, 0, (struct sockaddr *) &client_addr, &client_addr_len);
         if (ret < 0)
         {
             PERROR ("recvfrom");
             return -1;
         }
-
-        struct sockaddr_in client_addr;
-        client_addr.sin_family = AF_INET;
-        client_addr.sin_port = htons (1234);
-        client_addr.sin_addr.s_addr = inet_addr (server_ip);
 
         ret = sendto (sock, buffer, packet_size, 0, (struct sockaddr *) &client_addr, sizeof (struct sockaddr_in));
         if (ret < 0)

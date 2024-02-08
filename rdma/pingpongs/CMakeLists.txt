@@ -1,27 +1,18 @@
-project(pingpong)
+cmake_minimum_required(VERSION 3.10)
 
-add_compile_options(-g -O2)
+project("rdma")
 
-add_library(rc_pingpong_lib SHARED src/pingpong.c)
+if (NOT DEBUG)
+    set(DEBUG 0)
+endif ()
+add_definitions(-DDEBUG=${DEBUG})
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O1 -g -Wall -Werror -Wextra -Wpedantic")
+
 add_library(libibverbs SHARED IMPORTED)
 set_property(TARGET libibverbs PROPERTY IMPORTED_LOCATION /usr/lib/x86_64-linux-gnu/libibverbs.so)
 
-add_executable(rc_pingpong rc_pingpong.c)
-target_link_libraries(rc_pingpong rc_pingpong_lib)
-target_link_libraries(rc_pingpong libibverbs)
+link_libraries(libibverbs)
+file(GLOB SOURCES src/*.c ../../common/*.c)
 
-add_executable(srq_pingpong srq_pingpong.c)
-target_link_libraries(srq_pingpong rc_pingpong_lib)
-target_link_libraries(srq_pingpong libibverbs)
-
-add_executable(uc_pingpong uc_pingpong.c)
-target_link_libraries(uc_pingpong rc_pingpong_lib)
-target_link_libraries(uc_pingpong libibverbs)
-
-add_executable(ud_pingpong ud_pingpong.c)
-target_link_libraries(ud_pingpong rc_pingpong_lib)
-target_link_libraries(ud_pingpong libibverbs)
-
-add_executable(xsrq_pingpong xsrq_pingpong.c)
-target_link_libraries(xsrq_pingpong rc_pingpong_lib)
-target_link_libraries(xsrq_pingpong libibverbs)
+add_executable (rc_pingpong ${SOURCES} rc_pingpong2.c)
