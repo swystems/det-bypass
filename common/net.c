@@ -253,7 +253,7 @@ struct sender_data {
     char *base_packet;
     struct sockaddr_ll *sock_addr;
     // function to send the packet
-    int (*send_packet) (const char *, const int, struct sockaddr_ll *, void *);
+    send_packet_t send_packet;
     // auxiliary data for the send function
     void *aux;
 };
@@ -262,25 +262,10 @@ void *thread_send_packets (void *args)
 {
     struct sender_data *data = (struct sender_data *) args;
 
-    if (data->base_packet == NULL || data->sock_addr == NULL)
-    {
-        LOG (stderr, "ERR: base_packet or sock_addr is NULL\n");
-        return NULL;
-    }
-
-    struct iphdr *ip = (struct iphdr *) (data->base_packet + sizeof (struct ethhdr));
-
     for (uint64_t id = 1; id <= data->iters; ++id)
     {
-        ip->id = htons (id);
 
-        struct pingpong_payload *payload = packet_payload(data->base_packet);
-        *payload = empty_pingpong_payload ();
-        payload->id = id;
-        payload->phase = 0;
-        payload->ts[0] = get_time_ns ();
-
-        int ret = data->send_packet (data->base_packet, PACKET_SIZE, data->sock_addr, data->aux);
+        int ret = data->send_packet (data->base_packet, id, data->sock_addr, data->aux);
         if (ret < 0)
         {
             PERROR ("data->send_packet");
@@ -299,7 +284,7 @@ void *thread_send_packets (void *args)
 
 static pthread_t sender_thread;
 
-int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, int (*send_packet) (const char *, const int, struct sockaddr_ll *, void *), void *aux)
+int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux)
 {
     struct sender_data *data = malloc (sizeof (struct sender_data));
     if (!data)
@@ -310,13 +295,21 @@ int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet,
 
     data->iters = iters;
     data->interval = interval;
-    data->base_packet = malloc (PACKET_SIZE);
-    data->sock_addr = malloc (sizeof (struct sockaddr_ll));
     data->send_packet = send_packet;
     data->aux = aux;
 
-    memcpy (data->base_packet, base_packet, PACKET_SIZE);
-    memcpy (data->sock_addr, sock_addr, sizeof (struct sockaddr_ll));
+    data->base_packet = NULL;
+    data->sock_addr = NULL;
+    if (base_packet)
+    {
+        data->base_packet = malloc (PACKET_SIZE);
+        memcpy (data->base_packet, base_packet, PACKET_SIZE);
+    }
+    if (sock_addr)
+    {
+        data->sock_addr = malloc (sizeof (struct sockaddr_ll));
+        memcpy (data->sock_addr, sock_addr, sizeof (struct sockaddr_ll));
+    }
 
     int ret = pthread_create (&sender_thread, NULL, thread_send_packets, data);
     if (ret < 0)
