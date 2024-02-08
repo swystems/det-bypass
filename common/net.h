@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common.h"
+#include "common.h"
 #include "utils.h"
 
 #include <arpa/inet.h>
@@ -104,6 +104,10 @@ int retrieve_local_ip (int ifindex, uint32_t *out_addr);
  * The client sends a UDP message containing its own addresses; the server replies with its own addresses.
  * Doing so avoids any kind of hard-coded addresses or configuration.
  *
+ * The src_* and dest_* variables are meant to point to empty variables: src_* will be filled with automatically
+ * gathered information about the local machine, while dest_* will be filled with the information received from the
+ * remote machine.
+ *
  * @param ifindex the index of the interface
  * @param server_ip the IP address of the server, required to send the UDP packet
  * @param is_server whether this node is the server or not
@@ -113,6 +117,25 @@ int retrieve_local_ip (int ifindex, uint32_t *out_addr);
  * @param dest_ip buffer to write the destination IP address to
  * @return 0 on success, -1 on failure
  */
-int exchange_addresses (const int ifindex, const char *server_ip, bool is_server,
-                        uint8_t *src_mac, uint8_t *dest_mac,
-                        uint32_t *src_ip, uint32_t *dest_ip);
+int exchange_eth_ip_addresses (const int ifindex, const char *server_ip, bool is_server,
+                               uint8_t *src_mac, uint8_t *dest_mac,
+                               uint32_t *src_ip, uint32_t *dest_ip);
+
+/**
+ * Generic function to exchange any kind of information between two machines in a reciprocal way.
+ * The `buffer` variable contains the data that the local machine will send to the remote machine.
+ * The `out_buffer` variable will be filled with the data received from the remote machine.
+ * Both the buffers must be greater of equal in size to `packet_size`.
+ *
+ * If the local machine is the client, it will send its own information to the server and then wait for the server's
+ * response. If the local machine is the server, it will wait for the client's message and then reply with its own
+ * information.
+ *
+ * @param server_ip the IP address of the server
+ * @param is_server whether this node is the server or not
+ * @param packet_size the size of the packet to send
+ * @param buffer the buffer to send. Must be at least `packet_size` bytes long
+ * @param out_buffer the buffer to write the received data to. Must be at least `packet_size` bytes long
+ * @return
+ */
+int exchange_data (const char *server_ip, bool is_server, uint32_t packet_size, uint8_t *buffer, uint8_t *out_buffer);

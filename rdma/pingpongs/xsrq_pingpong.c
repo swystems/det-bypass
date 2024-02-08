@@ -47,7 +47,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "pingpong.h"
+#include "src/pingpong.h"
 
 #define MSG_FORMAT "%04x:%06x:%06x:%06x:%06x:%32s"
 #define MSG_SIZE 66

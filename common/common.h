@@ -37,7 +37,8 @@
 #endif
 
 #define START_TIMER() uint64_t __start = get_time_ns ()
-#define STOP_TIMER()                             \
+#define STOP_TIMER() uint64_t __end = get_time_ns ()
+#define STOP_TIMER_AND_PRINT()                   \
     do                                           \
     {                                            \
         uint64_t __end = get_time_ns ();         \
@@ -66,7 +67,9 @@
  * Size of the exchanged packet containing MAC address (6 bytes) and IP address (4 bytes) of each machine.
  * This packet is sent before the start of pingpong to exchange the addresses without hardcoding them
  */
-#define INFO_PACKET_SIZE (ETH_ALEN + sizeof (uint32_t))
+#define ETH_IP_INFO_PACKET_SIZE (ETH_ALEN + sizeof (uint32_t))
+
+#define ROCE_INFO_PACKET_SIZE (sizeof (int) * 3 + 16)// LID (int), QPN (int), PSN (int), GID (16 bytes)
 
 // Custom ethernet protocol number
 #define ETH_P_PINGPONG 0x2002
@@ -98,6 +101,20 @@ inline struct pingpong_payload empty_pingpong_payload ()
 {
     struct pingpong_payload payload;
     payload.id = 0;
+    payload.phase = 0;
+    payload.ts[0] = 0;
+    payload.ts[1] = 0;
+    payload.ts[2] = 0;
+    payload.ts[3] = 0;
+    payload.magic = PINGPONG_MAGIC;
+
+    return payload;
+}
+
+inline struct pingpong_payload new_pingpong_payload (__u32 id)
+{
+    struct pingpong_payload payload;
+    payload.id = id;
     payload.phase = 0;
     payload.ts[0] = 0;
     payload.ts[1] = 0;

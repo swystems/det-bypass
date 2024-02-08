@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common.h"
+#include "common.h"
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>

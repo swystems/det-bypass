@@ -44,7 +44,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "pingpong.h"
+#include "src/pingpong.h"
 
 enum {
     PINGPONG_RECV_WRID = 1,

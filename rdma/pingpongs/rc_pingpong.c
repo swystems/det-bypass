@@ -46,8 +46,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../../common/common.h"
+#include "../../common/persistence.h"
 #include "ccan/minmax.h"
-#include "pingpong.h"
+#include "src/pingpong.h"
 
 /**
  * The ID of the receive and send work requests.
@@ -83,7 +85,7 @@ static int validate_buf;
 // Whether to use Device Memory (DM).
 // Device Memory is a memory region that is directly accessible by the devices, without the need of the CPU.
 // The difference with Memory Region (MR) is that the MR is managed by the CPU, while the DM is managed by the devices(?)
-static int use_dm;
+static int use_dm = 0;
 
 // Whether to use the new send API.
 // The new send API is a new API that allows to send multiple messages with a single call.
@@ -831,7 +833,6 @@ parse_single_wc (struct pingpong_context *ctx, int *scnt, int *rcnt, int *routs,
         else
         {
             //LOG ("Step 4: Received packet from server");
-            update_payload (ctx->pp_buf, 4);
             store_payload (ctx->pp_buf, pp_data);
         }
 

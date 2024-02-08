@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../common.h"
+#include "../../common/common.h"
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/if_link.h>

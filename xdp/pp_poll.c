@@ -1,6 +1,6 @@
-#include "common.h"
-#include "src/net.h"
-#include "src/persistence.h"
+#include "../common/common.h"
+#include "../common/net.h"
+#include "../common/persistence.h"
 #include "src/xdp-loading.h"
 
 #include <stdbool.h>
@@ -106,8 +106,13 @@ void *dump_map (void *aux)
 
 int sock;
 
-int send_packet (const char *buf, const int buf_len __unused, struct sockaddr_ll *sock_addr, void *aux __unused)
+int send_packet (const char *buf, const int packet_id, struct sockaddr_ll *sock_addr, void *aux __unused)
 {
+    struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
+    ip->id = htons (packet_id);
+    struct pingpong_payload *payload = packet_payload (buf);
+    *payload = new_pingpong_payload (packet_id);
+    payload->ts[0] = get_time_ns ();
     return send_pingpong_packet (sock, buf, sock_addr);
 }
 
@@ -169,10 +174,10 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
     uint32_t src_ip = 0;
     uint32_t dest_ip = 0;
     LOG (stdout, "Exchanging addresses... ");
-    int ret = exchange_addresses (ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
+    int ret = exchange_eth_ip_addresses (ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
     if (ret < 0)
     {
-        fprintf (stderr, "ERR: exchange_addresses failed\n");
+        fprintf (stderr, "ERR: exchange_eth_ip_addresses failed\n");
         return;
     }
     LOG (stdout, "OK\n");

@@ -20,7 +20,7 @@ if (NOT DEBUG)
 endif ()
 add_definitions(-DDEBUG=${DEBUG})
 
-file(GLOB SOURCES src/*.c)
+file(GLOB SOURCES src/*.c ../common/*.c)
 add_executable(pp_poll ${SOURCES} pp_poll.c)
 add_dependencies(pp_poll pingpong)
 
