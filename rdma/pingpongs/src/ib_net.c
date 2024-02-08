@@ -32,14 +32,21 @@ int ib_get_local_info (struct ibv_context *restrict context, int ib_port, int gi
     struct ibv_port_attr port_info;
     if (ibv_query_port (context, ib_port, &port_info))
     {
-        fprintf (stderr, "Couldn't get port info\n");
+        LOG (stderr, "Couldn't get port info\n");
         return 1;
     }
 
     out->lid = port_info.lid;
+
+    if (port_info.link_layer != IBV_LINK_LAYER_ETHERNET && !out->lid)
+    {
+        LOG (stderr, "Couldn't get local LID\n");
+        return 1;
+    }
+
     if (ibv_query_gid (context, ib_port, gidx, &out->gid))
     {
-        fprintf (stderr, "Couldn't get gid\n");
+        LOG (stderr, "Couldn't get local GID\n");
         return 1;
     }
 

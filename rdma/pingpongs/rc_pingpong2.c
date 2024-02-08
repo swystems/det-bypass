@@ -55,8 +55,13 @@ struct pingpong_context {
     int send_flags;
 
     union {
-        uint8_t *buf;
-        struct pingpong_payload *payload;
+        uint8_t *recv_buf;
+        struct pingpong_payload *recv_payload;
+    };
+
+    union {
+        uint8_t *send_buf;
+        struct pingpong_payload *send_payload;
     };
 
     struct ibv_context *context;
@@ -64,12 +69,27 @@ struct pingpong_context {
     struct ibv_pd *pd;
     uint64_t completion_timestamp_mask;
 
-    struct ibv_mr *mr;
+    struct ibv_mr *recv_mr;
+    struct ibv_mr *send_mr;
+
     struct ibv_cq_ex *cq;
 
     struct ibv_qp *qp;
     struct ibv_qp_ex *qpx;
 };
+
+int setup_memaligned_buffer (void **buf, size_t size)
+{
+    *buf = memalign (page_size, size);
+    if (!*buf)
+    {
+        LOG (stdout, "Couldn't allocate buffer\n");
+        return 1;
+    }
+    memset (*buf, 0, size);
+
+    return 0;
+}
 
 struct pingpong_context *pp_init_context (struct ibv_device *dev)
 {
@@ -81,19 +101,22 @@ struct pingpong_context *pp_init_context (struct ibv_device *dev)
 
     ctx->send_flags = IBV_SEND_SIGNALED;
 
-    ctx->buf = memalign (page_size, PACKET_SIZE);
-    if (!ctx->buf)
+    if (setup_memaligned_buffer ((void **) &ctx->recv_buf, PACKET_SIZE))
     {
-        LOG (stdout, "Couldn't allocate work buf.\n");
+        LOG (stdout, "Couldn't allocate buffer\n");
         goto clean_ctx;
     }
 
-    memset (ctx->buf, 0, PACKET_SIZE);
+    if (setup_memaligned_buffer ((void **) &ctx->send_buf, PACKET_SIZE))
+    {
+        LOG (stdout, "Couldn't allocate buffer\n");
+        goto clean_buf;
+    }
 
     ctx->context = ibv_open_device (dev);
     if (!ctx->context)
     {
-        LOG (stdout, "Couldn't get context for %s.\n", ibv_get_device_name (dev));
+        LOG (stdout, "Couldn't open device.\n");
         goto clean_buf;
     }
 
@@ -121,8 +144,14 @@ struct pingpong_context *pp_init_context (struct ibv_device *dev)
         ctx->completion_timestamp_mask = attrx.completion_timestamp_mask;
     }
 
-    ctx->mr = ibv_reg_mr (ctx->pd, ctx->buf, PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
-    if (!ctx->mr)
+    ctx->recv_mr = ibv_reg_mr (ctx->pd, ctx->recv_buf, PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
+    if (!ctx->recv_mr)
+    {
+        LOG (stdout, "Couldn't register MR.\n");
+        goto clean_pd;
+    }
+    ctx->send_mr = ibv_reg_mr (ctx->pd, ctx->send_buf, PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
+    if (!ctx->send_mr)
     {
         LOG (stdout, "Couldn't register MR.\n");
         goto clean_pd;
@@ -168,7 +197,7 @@ struct pingpong_context *pp_init_context (struct ibv_device *dev)
 
         ctx->qpx = ibv_qp_to_qp_ex (ctx->qp);
 
-        ctx->send_flags |= IBV_SEND_INLINE;// TODO: check whether this is possible
+        //ctx->send_flags |= IBV_SEND_INLINE;// TODO: check whether this is possible
     }
 
     {
@@ -192,13 +221,15 @@ clean_qp:
 clean_cq:
     ibv_destroy_cq ((struct ibv_cq *) ctx->cq);
 clean_mr:
-    ibv_dereg_mr (ctx->mr);
+    ibv_dereg_mr (ctx->send_mr);
+    ibv_dereg_mr (ctx->recv_mr);
 clean_pd:
     ibv_dealloc_pd (ctx->pd);
 clean_device:
     ibv_close_device (ctx->context);
 clean_buf:
-    free (ctx->buf);
+    free (ctx->send_buf);
+    free (ctx->recv_buf);
 clean_ctx:
     free (ctx);
 
@@ -219,7 +250,13 @@ int pp_close_context (struct pingpong_context *ctx)
         return 1;
     }
 
-    if (ibv_dereg_mr (ctx->mr))
+    if (ibv_dereg_mr (ctx->recv_mr))
+    {
+        LOG (stdout, "Failed to deregister MR.\n");
+        return 1;
+    }
+
+    if (ibv_dereg_mr (ctx->send_mr))
     {
         LOG (stdout, "Failed to deregister MR.\n");
         return 1;
@@ -237,7 +274,8 @@ int pp_close_context (struct pingpong_context *ctx)
         return 1;
     }
 
-    free (ctx->buf);
+    free (ctx->recv_buf);
+    free (ctx->send_buf);
     free (ctx);
 
     return 0;
@@ -290,23 +328,27 @@ int pp_ib_connect (struct pingpong_context *ctx, int port, int local_psn, enum i
 
 int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
 {
-    ibv_wr_start (ctx->qpx);
-    ctx->qpx->wr_id = PINGPONG_SEND_WRID;
-    ctx->qpx->wr_flags = ctx->send_flags;
-
-    ibv_wr_send (ctx->qpx);
-
-    const uintptr_t buf = buffer == NULL ? (uintptr_t) ctx->payload : (uintptr_t) buffer;
-
-    ibv_wr_set_sge (ctx->qpx, ctx->mr->lkey, PACKET_SIZE, buf);
-    int ret = ibv_wr_complete (ctx->qpx);
-    if (ret)
+    const uintptr_t buff = buffer == NULL ? (uintptr_t) ctx->send_buf : (uintptr_t) buffer;
+    struct ibv_sge list = {
+        .addr = buff,
+        .length = PACKET_SIZE,
+        .lkey = ctx->send_mr->lkey};
+    struct ibv_send_wr wr = {
+        .wr_id = PINGPONG_SEND_WRID,
+        .sg_list = &list,
+        .num_sge = 1,
+        .opcode = IBV_WR_SEND,
+        .send_flags = ctx->send_flags
+    };
+    struct ibv_send_wr *bad_wr;
+    if (ibv_post_send (ctx->qp, &wr, &bad_wr))
     {
         LOG (stdout, "Failed to post send.\n");
-        return ret;
+        return 1;
     }
 
     ctx->pending |= PINGPONG_SEND_WRID;
+
     return 0;
 }
 
@@ -318,15 +360,15 @@ int pp_send_single_packet (const char *buf, const int packet_id, struct sockaddr
 
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
 
-    return pp_post_send (ctx, (const uint8_t *) buf);
+    return pp_post_send (ctx, NULL);//(const uint8_t *) buf);
 }
 
 static int pp_post_recv (struct pingpong_context *ctx, int n)
 {
     struct ibv_sge list = {
-        .addr = (uintptr_t) ctx->buf,
+        .addr = (uintptr_t) ctx->recv_buf,
         .length = PACKET_SIZE,
-        .lkey = ctx->mr->lkey};
+        .lkey = ctx->recv_mr->lkey};
 
     struct ibv_recv_wr wr = {
         .wr_id = PINGPONG_RECV_WRID,
@@ -339,6 +381,8 @@ static int pp_post_recv (struct pingpong_context *ctx, int n)
     for (i = 0; i < n; i++)
         if (ibv_post_recv (ctx->qp, &wr, &bad_wr))
             break;
+
+    LOG (stdout, "Posted %d receives\n", i);
 
     return i;
 }
@@ -358,26 +402,29 @@ int parse_single_wc (struct pingpong_context *ctx, const bool is_server)
     switch (wr_id)
     {
     case PINGPONG_SEND_WRID:
+        LOG (stdout, "Sent packet\n");
         break;
     case PINGPONG_RECV_WRID:
+        LOG (stdout, "Received packet\n");
+        memcpy (ctx->send_payload, ctx->recv_payload, sizeof (struct pingpong_payload));
         if (is_server)
         {
-            ctx->payload->ts[1] = ts;
-            ctx->payload->ts[2] = get_time_ns ();
+            ctx->send_payload->ts[1] = ts;
+            ctx->send_payload->ts[2] = get_time_ns ();
             // In this case, using the ctx->buf is safe because the server has no send thread concurrently accessing it.
-            pp_post_send (ctx, ctx->buf);
+            pp_post_send (ctx, NULL);
         }
         else
         {
-            ctx->payload->ts[3] = get_time_ns ();
-            persistence->write (persistence, ctx->payload);
+            ctx->send_payload->ts[3] = get_time_ns ();
+            persistence->write (persistence, ctx->send_payload);
         }
         if (--available_recv <= 1)
         {
             available_recv += pp_post_recv (ctx, RECEIVE_DEPTH - available_recv);
-            if (available_recv <= RECEIVE_DEPTH)
+            if (available_recv < RECEIVE_DEPTH)
             {
-                LOG (stdout, "Couldn't post enough receives\n");
+                LOG (stdout, "Couldn't post enough receives, there are only %d\n", available_recv);
                 return 1;
             }
         }
@@ -455,14 +502,11 @@ int main (int argc, char **argv)
         fprintf (stderr, "Couldn't exchange data\n");
         return 1;
     }
-
-    fprintf (stdout, "Exchange data successful\n");
-    fflush (stdout);
     ib_print_node_info (&remote_info);
 
     if (!is_server)// only client needs to print
     {
-        persistence = persistence_init ("rc_pingpong.dat", PERSISTENCE_F_FILE);
+        persistence = persistence_init ("rc_pingpong.dat", PERSISTENCE_F_STDOUT);
         if (!persistence)
         {
             fprintf (stderr, "Couldn't initialize persistence agent\n");

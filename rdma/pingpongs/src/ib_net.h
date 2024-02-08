@@ -4,12 +4,12 @@
 
 #pragma once
 
+#include "../../../common/common.h"
 #include <arpa/inet.h>
 #include <infiniband/verbs.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 struct ib_node_info {
     int lid;
     int qpn;
