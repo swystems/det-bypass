@@ -1,7 +1,8 @@
 # RDMA pingpongs
 
 This directory contains a set of RDMA pingpong tests from
-the [rdma-core](https://github.com/linux-rdma/rdma-core/tree/master/libibverbs/examples) repository. Credits to the original authors.
+the [rdma-core](https://github.com/linux-rdma/rdma-core/tree/master/libibverbs/examples) repository. Credits to the
+original authors.
 
 The original code was modified to allow storing the timestamp of each packet exchanged during the pingpong.
 
@@ -11,6 +12,12 @@ The original code was modified to allow storing the timestamp of each packet exc
 
   A Reliable Connection (RC) is a connection-oriented transport that provides reliable, in-order delivery of messages.
   This transport type is very similar to TCP in the TCP/IP stack.
+
+  Using RC transport to do the pingpong experiment in the asynchronous way (i.e., the client sends packets at a fixed
+  interval), is pretty tricky: the client must wait for the completion of the previous message before sending another
+  one (because of the definition of the reliable connection). So, if the ACK for each message is waited, then the send
+  interval will not be the wanted one; if the ACK is not waited, then the pingpong becomes unpredictable, hoping that
+  the ACK is received within the time interval.
 
 - [uc_pingpong](./uc_pingpong.c): A RDMA pingpong using the Unreliable Connection (UC) transport.
 
@@ -68,7 +75,7 @@ The number of packets sent can be specified with the `-n` flag.
 
 The programs are customized to store the timestamp of each message sent and received.
 
-The raw timestamps and the calculated latencies are stored in two .txt files under the `results` directory on each 
+The raw timestamps and the calculated latencies are stored in two .txt files under the `results` directory on each
 client node.
 
 Note that for each packet, the first and last timestamps are computed on one node, while the second and third

@@ -50,7 +50,7 @@ static int available_recv;
 static persistence_agent_t *persistence;
 
 struct pingpong_context {
-    atomic_uint_fast8_t pending;// WID of the pending WR
+    volatile atomic_uint_fast8_t pending;// WID of the pending WR
 
     int send_flags;
 
@@ -312,7 +312,7 @@ int pp_ib_connect (struct pingpong_context *ctx, int port, int local_psn, enum i
     }
 
     attr.qp_state = IBV_QPS_RTS;
-    attr.timeout = 14;
+    attr.timeout = 31;
     attr.retry_cnt = 7;
     attr.rnr_retry = 7;
     attr.sq_psn = local_psn;
@@ -328,20 +328,17 @@ int pp_ib_connect (struct pingpong_context *ctx, int port, int local_psn, enum i
 
 int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
 {
-    const uintptr_t buff = buffer == NULL ? (uintptr_t) ctx->send_buf : (uintptr_t) buffer;
-    struct ibv_sge list = {
-        .addr = buff,
-        .length = PACKET_SIZE,
-        .lkey = ctx->send_mr->lkey};
-    struct ibv_send_wr wr = {
-        .wr_id = PINGPONG_SEND_WRID,
-        .sg_list = &list,
-        .num_sge = 1,
-        .opcode = IBV_WR_SEND,
-        .send_flags = ctx->send_flags
-    };
-    struct ibv_send_wr *bad_wr;
-    if (ibv_post_send (ctx->qp, &wr, &bad_wr))
+    ibv_wr_start (ctx->qpx);
+    ctx->qpx->wr_id = PINGPONG_SEND_WRID;
+    ctx->qpx->wr_flags = ctx->send_flags;
+
+    ibv_wr_send (ctx->qpx);
+
+    const uintptr_t buf = buffer == NULL ? (uintptr_t) ctx->send_buf : (uintptr_t) buffer;
+
+    ibv_wr_set_sge (ctx->qpx, ctx->send_mr->lkey, buf, PACKET_SIZE);
+    int ret = ibv_wr_complete (ctx->qpx);
+    if (ret)
     {
         LOG (stdout, "Failed to post send.\n");
         return 1;
@@ -352,13 +349,11 @@ int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
     return 0;
 }
 
-int pp_send_single_packet (const char *buf, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+int pp_send_single_packet (const char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
-    struct pingpong_payload *payload = (struct pingpong_payload *) buf;
-    *payload = new_pingpong_payload (packet_id);
-    payload->ts[1] = get_time_ns ();
-
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
+    *ctx->send_payload = new_pingpong_payload (packet_id);
+    ctx->send_payload->ts[1] = get_time_ns ();
 
     return pp_post_send (ctx, NULL);//(const uint8_t *) buf);
 }
@@ -406,9 +401,9 @@ int parse_single_wc (struct pingpong_context *ctx, const bool is_server)
         break;
     case PINGPONG_RECV_WRID:
         LOG (stdout, "Received packet\n");
-        memcpy (ctx->send_payload, ctx->recv_payload, sizeof (struct pingpong_payload));
         if (is_server)
         {
+            memcpy (ctx->send_payload, ctx->recv_payload, sizeof (struct pingpong_payload));
             ctx->send_payload->ts[1] = ts;
             ctx->send_payload->ts[2] = get_time_ns ();
             // In this case, using the ctx->buf is safe because the server has no send thread concurrently accessing it.
@@ -416,8 +411,8 @@ int parse_single_wc (struct pingpong_context *ctx, const bool is_server)
         }
         else
         {
-            ctx->send_payload->ts[3] = get_time_ns ();
-            persistence->write (persistence, ctx->send_payload);
+            ctx->recv_payload->ts[3] = get_time_ns ();
+            persistence->write (persistence, ctx->recv_payload);
         }
         if (--available_recv <= 1)
         {
@@ -523,16 +518,8 @@ int main (int argc, char **argv)
     uint8_t *send_buffer = NULL;
     if (!is_server)
     {
-        // Buffer used to send packets.
-        // ctx->buf is not used because otherwise it would be used concurrently by the sending thread and the main thread.
-        send_buffer = (uint8_t *) malloc (PACKET_SIZE);
-        if (!send_buffer)
-        {
-            fprintf (stderr, "Couldn't allocate send_bufferfer\n");
-            return 1;
-        }
 
-        start_sending_packets (iters, interval, (char *) send_buffer, NULL, pp_send_single_packet, ctx);
+        start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
     }
 
     uint32_t recv_count, send_count;
