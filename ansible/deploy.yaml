@@ -1,0 +1,10 @@
+---
+- hosts: all
+  gather_facts: False
+  # gather_subset:
+  #   - "!all"
+  tasks:
+    - name: deploy repo
+      synchronize:
+        src: ../../
+        dest: test
