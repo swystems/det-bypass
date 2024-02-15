@@ -3,17 +3,15 @@ all:
     xdp1:
       ansible_host: swystems.xdp1
       devs:
-        # - ens1f1np1
-        - enp65s0f0np0
+        - ens1f1np1
       ibdevs:
-        # - rocep7s0f1
-        - rocep65s0f0
+        - rocep3s0f1
     xdp2:
       ansible_host: swystems.xdp2
       devs:
-        - enp65s0f0np0
+        - ens1f1np1
       ibdevs:
-        - rocep65s0f0
+        - rocep3s0f1
 
   vars:
     ansible_user: mdr
