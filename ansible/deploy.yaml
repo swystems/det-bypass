@@ -7,4 +7,7 @@
     - name: deploy repo
       synchronize:
         src: ../../
-        dest: test
+        dest: det-bypass
+        rsync_opts:
+        - "--exclude=.git"
+        - "--exclude=analysis/" 
