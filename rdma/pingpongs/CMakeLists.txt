@@ -16,3 +16,4 @@ link_libraries(libibverbs)
 file(GLOB SOURCES src/*.c ../../common/*.c)
 
 add_executable (rc_pingpong ${SOURCES} rc_pingpong2.c)
+add_executable (ud_pingpong ${SOURCES} ud_pingpong2.c)

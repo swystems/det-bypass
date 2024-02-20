@@ -349,7 +349,7 @@ int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
     return 0;
 }
 
-int pp_send_single_packet (const char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+int pp_send_single_packet (char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
     *ctx->send_payload = new_pingpong_payload (packet_id);

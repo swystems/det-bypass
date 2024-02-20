@@ -66,7 +66,7 @@ struct sockaddr_ll build_sockaddr (int ifindex, const unsigned char *dest_mac);
  */
 int send_pingpong_packet (int sock, const char *buf, struct sockaddr_ll *sock_addr);
 
-typedef int (*send_packet_t) (const char *, const int, struct sockaddr_ll *, void *);
+typedef int (*send_packet_t) (char *, const int, struct sockaddr_ll *, void *);
 
 /**
  * Start a thread to send the packets every `interval` microseconds.
