@@ -106,7 +106,7 @@ void *dump_map (void *aux)
 
 int sock;
 
-int send_packet (const char *buf, const int packet_id, struct sockaddr_ll *sock_addr, void *aux __unused)
+int send_packet (char *buf, const int packet_id, struct sockaddr_ll *sock_addr, void *aux __unused)
 {
     struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
     ip->id = htons (packet_id);

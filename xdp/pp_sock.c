@@ -525,7 +525,7 @@ static void rx_and_process (struct config *cfg,
  * @param aux the socket information structure.
  * @return 0 if the packet was successfully sent, -1 otherwise.
  */
-int client_send_pp_packet (const char *buf, const int packet_id, struct sockaddr_ll *addr __unused, void *aux)
+int client_send_pp_packet (char *buf, const int packet_id, struct sockaddr_ll *addr __unused, void *aux)
 {
     struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
     ip->id = htons (packet_id);
@@ -535,7 +535,7 @@ int client_send_pp_packet (const char *buf, const int packet_id, struct sockaddr
 
     struct xsk_socket_info *socket = (struct xsk_socket_info *) aux;
 
-    int ret = xsk_send_packet (socket, (uint64_t) buf, buf_len, false, true);
+    int ret = xsk_send_packet (socket, (uint64_t) buf, PACKET_SIZE, false, true);
     if (ret)
     {
         LOG (stderr, "Failed to send packet\n");
