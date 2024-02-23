@@ -62,27 +62,23 @@ struct pingpong_context {
 
     struct ib_node_info remote_info;
 
-    union {
-        uint8_t *send_buf;
-        struct pingpong_payload *send_payload;
-    };
+    uint8_t *send_buf;
+    struct pingpong_payload *send_payload;
 
-    union {
-        uint8_t *recv_buf;
-        struct pingpong_payload *recv_payload;
-    };
+    uint8_t *recv_buf;
+    struct pingpong_payload *recv_payload;
 };
 
 int init_pp_buffer (void **buffer, size_t size)
 {
-    *buffer = memalign (page_size, size + 40);
+    *buffer = memalign (page_size, size);
     if (!*buffer)
     {
         fprintf (stderr, "Couldn't allocate work buffer\n");
         return 1;
     }
 
-    memset (*buffer, 0, size + 40);
+    memset (*buffer, 0, size);
     return 0;
 }
 
@@ -99,11 +95,13 @@ struct pingpong_context *pp_init_context (struct ibv_device *ib_dev)
         LOG (stderr, "Couldn't allocate send_buf\n");
         goto clean_ctx;
     }
+    ctx->send_payload = (struct pingpong_payload *) (ctx->send_buf + 40);
     if (init_pp_buffer ((void **) &ctx->recv_buf, PACKET_SIZE))
     {
         LOG (stderr, "Couldn't allocate recv_buf\n");
         goto clean_send_buf;
     }
+    ctx->recv_payload = (struct pingpong_payload *) (ctx->recv_buf + 40);
 
     ctx->context = ibv_open_device (ib_dev);
     if (!ctx->context)
@@ -119,13 +117,13 @@ struct pingpong_context *pp_init_context (struct ibv_device *ib_dev)
         goto clean_context;
     }
 
-    ctx->send_mr = ibv_reg_mr (ctx->pd, ctx->send_buf, PACKET_SIZE + 40, IBV_ACCESS_LOCAL_WRITE);
+    ctx->send_mr = ibv_reg_mr (ctx->pd, ctx->send_buf, PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
     if (!ctx->send_mr)
     {
         LOG (stderr, "Couldn't register MR for send_buf\n");
         goto clean_pd;
     }
-    ctx->recv_mr = ibv_reg_mr (ctx->pd, ctx->recv_buf, PACKET_SIZE + 40, IBV_ACCESS_LOCAL_WRITE);
+    ctx->recv_mr = ibv_reg_mr (ctx->pd, ctx->recv_buf, PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
     if (!ctx->recv_mr)
     {
         LOG (stderr, "Couldn't register MR for recv_buf\n");
@@ -262,7 +260,7 @@ int pp_post_recv (struct pingpong_context *ctx, int n)
 {
     struct ibv_sge list = {
         .addr = (uintptr_t) ctx->recv_buf,
-        .length = PACKET_SIZE + 40,
+        .length = PACKET_SIZE,
         .lkey = ctx->recv_mr->lkey};
     struct ibv_recv_wr wr = {
         .wr_id = PINGPONG_RECV_WRID,
@@ -284,7 +282,7 @@ int pp_post_send (struct pingpong_context *ctx)
     const struct ib_node_info *remote = &ctx->remote_info;
     struct ibv_sge list = {
         .addr = (uintptr_t) ctx->send_buf + 40,
-        .length = PACKET_SIZE,
+        .length = PACKET_SIZE - 40,
         .lkey = ctx->send_mr->lkey};
 
     struct ibv_send_wr wr = {
@@ -318,10 +316,11 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
     case PINGPONG_RECV_WRID:
         if (is_server)
         {
-            memcpy (ctx->send_buf + 40, ctx->recv_buf + 40, PACKET_SIZE);
+            // dump the hex memory content of recv_buf
+            memcpy (ctx->send_buf, ctx->recv_buf, PACKET_SIZE);
             ctx->send_payload->ts[1] = ts;
             ctx->send_payload->ts[2] = get_time_ns ();
-            LOG (stdout, "Sending back packet %d\n", *(uint32_t*)(ctx->recv_buf));
+            LOG (stdout, "Sending back packet %d\n", ctx->send_payload->id);
             if (pp_post_send (ctx))
             {
                 LOG (stderr, "Couldn't post send\n");
@@ -331,7 +330,7 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
         else
         {
             ctx->recv_payload->ts[3] = get_time_ns ();
-            //            printf ("Packet %d: %llu %llu %llu %llu\n", ctx->recv_payload->id, ctx->recv_payload->ts[0], ctx->recv_payload->ts[1], ctx->recv_payload->ts[2], ctx->recv_payload->ts[3]);
+            printf ("Packet %d: %llu %llu %llu %llu\n", ctx->recv_payload->id, ctx->recv_payload->ts[0], ctx->recv_payload->ts[1], ctx->recv_payload->ts[2], ctx->recv_payload->ts[3]);
         }
 
         if (--available_recv <= 1)
