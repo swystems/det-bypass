@@ -73,9 +73,9 @@ int add_packet_to_map (struct pingpong_payload *payload)
          *
          * TODO: Fix the data race in the reset of the index
          */
-//        bpf_spin_lock (&lock->value);
-//        lock->index = key;
-//        bpf_spin_unlock (&lock->value);
+        bpf_spin_lock (&lock->value);
+        lock->index = key;
+        bpf_spin_unlock (&lock->value);
         return -1;
     }
 
