@@ -36,14 +36,6 @@ int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_ma
                        const uint32_t src_ip, const uint32_t dest_ip);
 
 /**
- * Set the id of the payload inside buf.
- * This function both modifies the pingpong payload id and the ip header id.
- *
- * @return 0 on success, -1 on failure
- */
-int set_packet_payload (char *buf, struct pingpong_payload *payload);
-
-/**
  * Retrieve the payload from the given buffer.
  * This function assumes that the buffer contains a valid pingpong packet.
  * The returned pointer points to the payload inside the buffer.

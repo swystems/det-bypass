@@ -226,12 +226,6 @@ int build_base_packet (char *buf, const uint8_t *src_mac, const uint8_t *dest_ma
     return 0;
 }
 
-inline int set_packet_payload (char *buf, struct pingpong_payload *payload)
-{
-    memcpy (buf + sizeof (struct ethhdr) + sizeof (struct iphdr), payload, sizeof (struct pingpong_payload));
-    return 0;
-}
-
 inline struct pingpong_payload *packet_payload (const char *buf)
 {
     return (struct pingpong_payload *) (buf + sizeof (struct ethhdr) + sizeof (struct iphdr));
@@ -280,12 +274,11 @@ void *thread_send_packets (void *args)
     {
         ip->id = htons (id);
 
-        struct pingpong_payload payload = empty_pingpong_payload ();
-        payload.id = id;
-        payload.phase = 0;
-        payload.ts[0] = get_time_ns ();
-
-        set_packet_payload (data->base_packet, &payload);
+        struct pingpong_payload *payload = packet_payload(data->base_packet);
+        *payload = empty_pingpong_payload ();
+        payload->id = id;
+        payload->phase = 0;
+        payload->ts[0] = get_time_ns ();
 
         int ret = data->send_packet (data->base_packet, PACKET_SIZE, data->sock_addr, data->aux);
         if (ret < 0)

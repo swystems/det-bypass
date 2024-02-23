@@ -6,6 +6,8 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+#define DUMP_MAP 1
+
 void usage (char *prog)
 {
     // <prog> <ifname> <action>
@@ -41,30 +43,66 @@ static struct bpf_object *loaded_xdp_obj;
  * @param busy_poll_next if true, the function busy-waits the next index, otherwise round-robin is used
  * @return the index of the retrieved payload
  */
-inline int poll_next_payload (void *map_ptr, struct pingpong_payload *dest_payload, uint32_t last_index, bool busy_poll_next)
+inline uint32_t poll_next_payload (void *map_ptr, struct pingpong_payload *dest_payload, uint32_t next_index)
 {
-    uint32_t curr_idx = (last_index + 1) % PACKETS_MAP_SIZE;
-    struct pingpong_payload *map = map_ptr;
+    volatile struct pingpong_payload *volatile map = map_ptr;
+    map += next_index;
 
-    if (busy_poll_next)
-    {
-        BUSY_WAIT (!valid_pingpong_payload (map + curr_idx));
-        *dest_payload = *(map + curr_idx);
-        memset (map + curr_idx, 0, sizeof (struct pingpong_payload));
-        return curr_idx;
-    }
+    BUSY_WAIT (!valid_pingpong_payload (map));
+    *dest_payload = *map;
+    memset ((void *) map, 0, sizeof (struct pingpong_payload));
 
-    while (1)
-    {
-        if (valid_pingpong_payload (map + curr_idx))
-        {
-            *dest_payload = *(map + curr_idx);
-            memset (map + curr_idx, 0, sizeof (struct pingpong_payload));
-            return curr_idx;
-        }
-        curr_idx = (curr_idx + 1) % PACKETS_MAP_SIZE;
-    }
+    return (next_index + 1) % PACKETS_MAP_SIZE;
 }
+
+#if DUMP_MAP
+struct dump_args {
+    void *map_ptr;
+    uint32_t *us_poll_idx;
+    bool running;
+};
+/**
+ * Dump the content of the eBPF map to the standard output.
+ * This function should be run in a separate thread.
+ */
+void *dump_map (void *aux)
+{
+    struct dump_args *args = aux;
+    while (args->running)
+    {
+        struct pingpong_payload *map = args->map_ptr;
+        for (uint32_t i = 0; i < PACKETS_MAP_SIZE; ++i)
+        {
+            if (map->id == 0)
+            {
+                printf ("  EMPTY  ");
+            }
+            else
+            {
+                if (map->magic == PINGPONG_MAGIC)
+                    printf ("(%07d)", map->id);// to be read
+                else
+                    printf ("[%07d]", map->id);
+            }
+            printf (" ");
+            map++;
+        }
+        printf ("\n");
+        uint32_t us_idx = *args->us_poll_idx;
+        for (uint32_t i = 0; i < PACKETS_MAP_SIZE; ++i)
+        {
+            if (i == us_idx)
+                printf ("^^^^^^^^^ ");
+            else
+                printf ("          ");
+        }
+        printf ("\n");
+        pp_sleep (500);
+    }
+
+    return NULL;
+}
+#endif
 
 int sock;
 
@@ -177,14 +215,25 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
     printf ("\nStarting pingpong experiment... \n\n");
     fflush (stdout);
     uint32_t current_id = 0;
-    uint32_t last_map_idx = -1;// -1 to make the first poll_next_payload start by looking in position 0
+    uint32_t next_map_idx = 0;
 
+#if DUMP_MAP
+    pthread_t map_dump_thread;
+    struct dump_args *dump_map_args = malloc (sizeof (struct dump_args));
+    if (!is_server)
+    {
+        dump_map_args->map_ptr = map_ptr;
+        dump_map_args->us_poll_idx = &next_map_idx;
+        dump_map_args->running = true;
+        pthread_create (&map_dump_thread, NULL, dump_map, dump_map_args);
+    }
+#endif
     struct pingpong_payload *buf_payload = packet_payload (buf);
     if (is_server)
     {
         while (current_id < iters)
         {
-            last_map_idx = poll_next_payload (map_ptr, buf_payload, last_map_idx, current_id >= iters - PACKETS_MAP_SIZE);
+            next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
 
             if (UNLIKELY (buf_payload->phase != 0))
             {
@@ -221,7 +270,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
     {
         while (current_id < iters)
         {
-            last_map_idx = poll_next_payload (map_ptr, buf_payload, last_map_idx, current_id >= iters - PACKETS_MAP_SIZE);
+            next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
 
             if (buf_payload->phase != 2)
             {
@@ -230,7 +279,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
             }
 
 #if DEBUG
-            if (UNLIKELY (buf_payload->id - current_id != 1))
+            if (buf_payload->id - current_id != 1)
                 LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
 #endif
 
@@ -245,6 +294,16 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
     printf ("Pingpong experiment finished\n");
 
     close (sock);
+
+#if DUMP_MAP
+    if (!is_server)
+    {
+        dump_map_args->running = false;
+        pthread_join (map_dump_thread, NULL);
+        free (dump_map_args);
+    }
+#endif
+
     munmap (map_ptr, sizeof (struct pingpong_payload));
     if (persistence)
         persistence->close (persistence);

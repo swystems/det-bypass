@@ -15,7 +15,17 @@ struct {
 } last_payload
     SEC (".maps");
 
-static __u32 current_item_idx = 0;
+struct lock_map_element {
+    struct bpf_spin_lock value;
+    __u32 index;
+};
+
+struct {
+    __uint (type, BPF_MAP_TYPE_ARRAY);
+    __type (key, __u32);
+    __type (value, struct lock_map_element);
+    __uint (max_entries, 1);
+} lck SEC (".maps");
 
 /**
  * Add the given payload to the map.
@@ -29,9 +39,51 @@ static __u32 current_item_idx = 0;
  */
 int add_packet_to_map (struct pingpong_payload *payload)
 {
-    current_item_idx++;
-    __u32 key = current_item_idx % PACKETS_MAP_SIZE;
-    return bpf_map_update_elem (&last_payload, &key, payload, BPF_ANY);
+    if (!payload)
+    {
+        bpf_printk ("Invalid payload\n");
+        return -1;
+    }
+
+    __u32 lock_key = 0;
+    struct lock_map_element *lock = bpf_map_lookup_elem (&lck, &lock_key);
+    if (!lock)
+    {
+        bpf_printk ("Failed to lookup lock element\n");
+        return -1;
+    }
+
+    bpf_spin_lock (&lock->value);
+    __u32 key = lock->index;
+    lock->index = (lock->index + 1) % PACKETS_MAP_SIZE;
+    bpf_spin_unlock (&lock->value);
+
+    struct pingpong_payload *old_payload = bpf_map_lookup_elem (&last_payload, &key);
+    if (!old_payload)
+    {
+        bpf_printk ("Failed to lookup element at index: %D\n", key);
+        return -1;
+    }
+
+    if (valid_pingpong_payload (old_payload))
+    {
+        /*
+         * If there is already a packet at the current index, it means that the map is full.
+         * Drop the packet and reset the next index to the current one.
+         *
+         * TODO: Fix the data race in the reset of the index
+         */
+//        bpf_spin_lock (&lock->value);
+//        lock->index = key;
+//        bpf_spin_unlock (&lock->value);
+        return -1;
+    }
+
+    bpf_printk ("Adding packet id: %u at index: %u\n", payload->id, key);
+
+    *old_payload = *payload;
+
+    return 0;
 }
 
 SEC ("xdp")
@@ -44,24 +96,24 @@ int xdp_main (struct xdp_md *ctx)
     // what identifies the pingpong packet is the custom ETH type ETH_P_PINGPONG (defined in common.h)
     if (data_start + sizeof (struct ethhdr) + sizeof (struct iphdr) + sizeof (struct pingpong_payload) > data_end)
     {
+        bpf_printk ("Packet is too small\n");
         return XDP_PASS;
     }
 
     struct ethhdr *eth = data_start;
     if (eth->h_proto != __constant_htons (ETH_P_PINGPONG))
     {
+        bpf_printk ("Invalid eth protocol: %u\n", eth->h_proto);
         return XDP_PASS;
     }
 
     struct pingpong_payload *payload = data_start + sizeof (struct ethhdr) + sizeof (struct iphdr);
 
-    if (payload->magic != PINGPONG_MAGIC)
+    if (!valid_pingpong_payload (payload))
     {
-        bpf_printk ("Invalid magic number: %u\n", payload->magic);
+        bpf_printk ("Invalid pingpong payload.\n");
         return XDP_PASS;
     }
-
-    bpf_printk ("Received packet with id %u\n", payload->id);
 
     add_packet_to_map (payload);
 

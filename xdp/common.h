@@ -78,6 +78,7 @@
 // Random magic number for pingpong packets
 #define PINGPONG_MAGIC 0x8badbeef
 
+
 struct pingpong_payload {
     __u32 id;
     __u32 phase;
@@ -114,7 +115,7 @@ inline struct pingpong_payload empty_pingpong_payload ()
  * @param payload the payload to check
  * @return 1 if the payload is valid, 0 otherwise
  */
-inline __u32 valid_pingpong_payload (const struct pingpong_payload *payload)
+inline __u32 valid_pingpong_payload (const volatile struct pingpong_payload *volatile payload)
 {
     return payload->magic == PINGPONG_MAGIC;
 }

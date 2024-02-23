@@ -51,5 +51,5 @@
     - name: Setup ntuple for AF_XDP
       become: yes
       shell: |
-        ethtool -N {{ dev }} flow-type ether proto 2002 action 0
+        ethtool -N {{ item }} flow-type ether proto 2002 action 0
       loop: "{{devs}}"

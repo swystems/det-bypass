@@ -7,10 +7,10 @@ set(CMAKE_CXX_STANDARD 17)
 
 # create a target pingpong, which compiles pingpong.c as a bpf program (-target bpf) using clang
 add_custom_target(pingpong
-        COMMAND clang -Wall -O3 -g -target bpf -c ${CMAKE_CURRENT_SOURCE_DIR}/pingpong.c -o ${CMAKE_CURRENT_BINARY_DIR}/pingpong.o
+        COMMAND clang -Wall -O2 -g -target bpf -c ${CMAKE_CURRENT_SOURCE_DIR}/pingpong.c -o ${CMAKE_CURRENT_BINARY_DIR}/pingpong.o
 )
 add_custom_target(pingpong_xsk
-        COMMAND clang -Wall -O3 -g -target bpf -c ${CMAKE_CURRENT_SOURCE_DIR}/pingpong_xsk.c -o ${CMAKE_CURRENT_BINARY_DIR}/pingpong_xsk.o
+        COMMAND clang -Wall -O2 -g -target bpf -c ${CMAKE_CURRENT_SOURCE_DIR}/pingpong_xsk.c -o ${CMAKE_CURRENT_BINARY_DIR}/pingpong_xsk.o
 )
 link_libraries(bpf xdp)
 
