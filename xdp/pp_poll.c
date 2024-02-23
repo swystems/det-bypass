@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
-#define DUMP_MAP 1
+#define DUMP_MAP 0
 
 void usage (char *prog)
 {
