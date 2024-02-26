@@ -1,17 +1,10 @@
 // Require information: Device name, Port GID Index, Server IP
-#include <arpa/inet.h>
-#include <getopt.h>
-#include <inttypes.h>
 #include <malloc.h>
-#include <netdb.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -30,6 +23,8 @@
 
 // Priority (i.e. service level) for the traffic
 #define PRIORITY 0
+
+persistence_agent_t *persistence_agent;
 
 enum {
     PINGPONG_RECV_WRID = 1,
@@ -238,6 +233,12 @@ int pp_close_context (struct pingpong_context *ctx)
         return 1;
     }
 
+    if (ctx->ah && ibv_destroy_ah (ctx->ah))
+    {
+        LOG (stderr, "Couldn't destroy AH\n");
+        return 1;
+    }
+
     if (ibv_dealloc_pd (ctx->pd))
     {
         LOG (stderr, "Couldn't deallocate PD\n");
@@ -273,12 +274,13 @@ int pp_post_recv (struct pingpong_context *ctx, int n)
         if (ibv_post_recv (ctx->qp, &wr, &bad_wr))
             break;
 
-    LOG (stdout, "Posted %d receives\n", i);
+    //LOG (stdout, "Posted %d receives\n", i);
 
     return i;
 }
 int pp_post_send (struct pingpong_context *ctx)
 {
+    BUSY_WAIT (ctx->pending & PINGPONG_SEND_WRID);
     const struct ib_node_info *remote = &ctx->remote_info;
     struct ibv_sge list = {
         .addr = (uintptr_t) ctx->send_buf + 40,
@@ -297,6 +299,7 @@ int pp_post_send (struct pingpong_context *ctx)
                 .remote_qpn = remote->qpn,
                 .remote_qkey = 0x11111111}}};
     struct ibv_send_wr *bad_wr;
+    ctx->pending |= PINGPONG_SEND_WRID;
     return ibv_post_send (ctx->qp, &wr, &bad_wr);
 }
 
@@ -316,11 +319,12 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
     case PINGPONG_RECV_WRID:
         if (is_server)
         {
-            // dump the hex memory content of recv_buf
+            // Make sure the send buffer is not being used by an outgoing packet.
+            BUSY_WAIT (ctx->pending & PINGPONG_SEND_WRID);
             memcpy (ctx->send_buf, ctx->recv_buf, PACKET_SIZE);
             ctx->send_payload->ts[1] = ts;
             ctx->send_payload->ts[2] = get_time_ns ();
-            LOG (stdout, "Sending back packet %d\n", ctx->send_payload->id);
+            // LOG (stdout, "Sending back packet %d\n", ctx->send_payload->id);
             if (pp_post_send (ctx))
             {
                 LOG (stderr, "Couldn't post send\n");
@@ -330,13 +334,13 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
         else
         {
             ctx->recv_payload->ts[3] = get_time_ns ();
-            printf ("Packet %d: %llu %llu %llu %llu\n", ctx->recv_payload->id, ctx->recv_payload->ts[0], ctx->recv_payload->ts[1], ctx->recv_payload->ts[2], ctx->recv_payload->ts[3]);
+            persistence_agent->write (persistence_agent, ctx->recv_payload);
         }
 
         if (--available_recv <= 1)
         {
             available_recv += pp_post_recv (ctx, RECEIVE_DEPTH - available_recv);
-            if (available_recv < RECEIVE_DEPTH)
+            if (UNLIKELY (available_recv < RECEIVE_DEPTH))
             {
                 LOG (stderr, "Couldn't post enough receives\n");
                 return 1;
@@ -348,7 +352,7 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
         return 1;
     }
 
-    ctx->pending &= wc.wr_id;
+    ctx->pending &= ~(int)wc.wr_id;
 
     return 0;
 }
@@ -441,6 +445,9 @@ int main (int argc, char **argv)
         server_ip = argv[6];
     }
 
+    if (!is_server)
+        persistence_agent = persistence_init ("ud.dat", 0);
+
     LOG (stdout, "Server IP: %s\n", server_ip);
 
     srand48 (getpid () * time (NULL));
@@ -496,15 +503,15 @@ int main (int argc, char **argv)
         start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
     }
 
-    uint32_t recv_count = 0;
-    while (recv_count < iters)
+    uint32_t recv_idx = 0;
+    while (LIKELY (recv_idx < iters))
     {
-        struct ibv_wc wc;
+        struct ibv_wc wc[2];
         int ne;
 
         do
         {
-            ne = ibv_poll_cq (ctx->cq, 1, &wc);
+            ne = ibv_poll_cq (ctx->cq, 2, wc);
             if (ne < 0)
             {
                 fprintf (stderr, "Poll CQ failed %d\n", ne);
@@ -512,18 +519,25 @@ int main (int argc, char **argv)
             }
         } while (!ne);
 
-        if (parse_single_wc (ctx, wc, is_server))
+        for (int i = 0; i < ne; ++i)
         {
-            fprintf (stderr, "Couldn't parse WC\n");
-            return 1;
-        }
+            if (UNLIKELY (parse_single_wc (ctx, wc[i], is_server)))
+            {
+                fprintf (stderr, "Couldn't parse WC\n");
+                return 1;
+            }
 
-        if (wc.wr_id == PINGPONG_RECV_WRID)
-            recv_count++;
+            if (wc[i].wr_id == PINGPONG_RECV_WRID)
+                recv_idx = max (recv_idx, ctx->recv_payload->id);
+        }
     }
 
     LOG (stdout, "Received all packets\n");
 
+    if (persistence_agent)
+    {
+        persistence_agent->close (persistence_agent);
+    }
     if (pp_close_context (ctx))
     {
         fprintf (stderr, "Couldn't close context\n");
