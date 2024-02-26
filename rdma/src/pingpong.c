@@ -30,13 +30,27 @@
  * SOFTWARE.
  */
 
-#ifndef IBV_PINGPONG_H
-#define IBV_PINGPONG_H
+#include "pingpong.h"
+#include <endian.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include <infiniband/verbs.h>
-
-enum ibv_mtu pp_mtu_to_enum (int mtu);
-void wire_gid_to_gid (const char *wgid, union ibv_gid *gid);
-void gid_to_wire_gid (const union ibv_gid *gid, char wgid[]);
-
-#endif /* IBV_PINGPONG_H */
+inline enum ibv_mtu pp_mtu_to_enum (int mtu)
+{
+    switch (mtu)
+    {
+    case 256:
+        return IBV_MTU_256;
+    case 512:
+        return IBV_MTU_512;
+    case 1024:
+        return IBV_MTU_1024;
+    case 2048:
+        return IBV_MTU_2048;
+    case 4096:
+        return IBV_MTU_4096;
+    default:
+        return 0;
+    }
+}

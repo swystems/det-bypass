@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2004 Topspin Communications.  All rights reserved.
+ * Copyright (c) 2006 Cisco Systems.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -30,37 +30,11 @@
  * SOFTWARE.
  */
 
-#include <config.h>
-
-#include <stdio.h>
-
-#include <endian.h>
+#ifndef IBV_PINGPONG_H
+#define IBV_PINGPONG_H
 
 #include <infiniband/verbs.h>
 
-int main (int argc, char *argv[])
-{
-    struct ibv_device **dev_list;
-    int num_devices, i;
+enum ibv_mtu pp_mtu_to_enum (int mtu);
 
-    dev_list = ibv_get_device_list (&num_devices);
-    if (!dev_list)
-    {
-        perror ("Failed to get IB devices list");
-        return 1;
-    }
-
-    printf ("    %-16s\t   node GUID\n", "device");
-    printf ("    %-16s\t----------------\n", "------");
-
-    for (i = 0; i < num_devices; ++i)
-    {
-        printf ("    %-16s\t%016llx\n",
-                ibv_get_device_name (dev_list[i]),
-                (unsigned long long) be64toh (ibv_get_device_guid (dev_list[i])));
-    }
-
-    ibv_free_device_list (dev_list);
-
-    return 0;
-}
+#endif /* IBV_PINGPONG_H */

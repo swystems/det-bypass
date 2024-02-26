@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "../../../common/common.h"
+#include "../../common/common.h"
 #include <arpa/inet.h>
 #include <infiniband/verbs.h>
 #include <stdio.h>

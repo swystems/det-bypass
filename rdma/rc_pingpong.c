@@ -1,23 +1,16 @@
 // Require information: Device name, Port GID Index, Server IP
-#include <arpa/inet.h>
-#include <getopt.h>
-#include <inttypes.h>
 #include <malloc.h>
-#include <netdb.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
-#include "../../common/common.h"
-#include "../../common/net.h"
-#include "../../common/persistence.h"
+#include "../common/common.h"
+#include "../common/net.h"
+#include "../common/persistence.h"
 //#include "ccan/minmax.h"
 #include "src/ib_net.h"
 #include "src/pingpong.h"
