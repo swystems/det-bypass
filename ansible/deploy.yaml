@@ -1,0 +1,13 @@
+---
+- hosts: all
+  gather_facts: False
+  # gather_subset:
+  #   - "!all"
+  tasks:
+    - name: deploy repo
+      synchronize:
+        src: ../../
+        dest: det-bypass
+        rsync_opts:
+        - "--exclude=.git"
+        - "--exclude=analysis/" 
