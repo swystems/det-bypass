@@ -16,14 +16,36 @@ enum persistence_output_flags {
 /**
  * Flags defining what should be persisted.
  */
-enum persistence_data_flags {
+enum persistence_measurement_flags {
     // Store all rounds timestamps. Default option.
-    PERSISTENCE_F_ALL_TIMESTAMPS = 1 << 2,
+    PERSISTENCE_M_ALL_TIMESTAMPS = 1 << 2,
     // Store rounds with minimum and maximum latency
-    PERSISTENCE_F_MIN_MAX_LATENCY = 1 << 3,
+    PERSISTENCE_M_MIN_MAX_LATENCY = 1 << 3,
     // TODO: Store rounds in buckets
-    PERSISTENCE_F_BUCKETS = 1 << 4,
+    PERSISTENCE_M_BUCKETS = 1 << 4,
 };
+
+/**
+ * Convert the index of the flag to the value of the flag.
+ * This function is useful when the user provides the index of the flag as an argument of the experiment program.
+ *
+ * @param value the index of the flag
+ * @return the value of the flag
+ */
+inline int pers_measurement_to_flag (const int value)
+{
+    switch (value)
+    {
+    case 0:
+        return PERSISTENCE_M_ALL_TIMESTAMPS;
+    case 1:
+        return PERSISTENCE_M_MIN_MAX_LATENCY;
+    case 2:
+        return PERSISTENCE_M_BUCKETS;
+    default:
+        return -1;
+    }
+}
 
 struct min_max_latency_data {
     uint64_t min;
@@ -41,9 +63,9 @@ typedef struct pers_base_data {
 
     /**
      * Auxiliary data, depending on the flags.
-     * - PERSISTENCE_F_ALL_TIMESTAMPS: NULL
-     * - PERSISTENCE_F_MIN_MAX_LATENCY: struct min_max_latency_data
-     * - PERSISTENCE_F_BUCKETS: struct bucket_data
+     * - PERSISTENCE_M_ALL_TIMESTAMPS: NULL
+     * - PERSISTENCE_M_MIN_MAX_LATENCY: struct min_max_latency_data
+     * - PERSISTENCE_M_BUCKETS: struct bucket_data
      */
     void *aux;
 } pers_base_data_t;

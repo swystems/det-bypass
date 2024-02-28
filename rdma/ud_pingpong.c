@@ -484,7 +484,7 @@ int main (int argc, char **argv)
     }
 
     if (!is_server)
-        persistence_agent = persistence_init ("ud.dat", PERSISTENCE_F_ALL_TIMESTAMPS);
+        persistence_agent = persistence_init ("ud.dat", PERSISTENCE_M_ALL_TIMESTAMPS);
 
     LOG (stdout, "Server IP: %s\n", server_ip);
 
