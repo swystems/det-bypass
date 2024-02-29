@@ -17,7 +17,7 @@
 
 #define IB_MTU (pp_mtu_to_enum (PACKET_SIZE))
 
-#define RECEIVE_DEPTH 500
+#define RECEIVE_DEPTH 1
 #define DEFAULT_PORT 18515
 #define IB_PORT 1
 
@@ -278,14 +278,14 @@ int pp_post_recv (struct pingpong_context *ctx, int n)
 
     return i;
 }
-int pp_post_send (struct pingpong_context *ctx)
+int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey)
 {
     BUSY_WAIT (ctx->pending & PINGPONG_SEND_WRID);
     const struct ib_node_info *remote = &ctx->remote_info;
     struct ibv_sge list = {
-        .addr = (uintptr_t) ctx->send_buf + 40,
+        .addr = buffer + 40,
         .length = PACKET_SIZE - 40,
-        .lkey = ctx->send_mr->lkey};
+        .lkey = lkey};
 
     struct ibv_send_wr wr = {
         .wr_id = PINGPONG_SEND_WRID,
@@ -317,15 +317,15 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
     case PINGPONG_SEND_WRID:
         break;
     case PINGPONG_RECV_WRID:
+        // LOG (stdout, "Received packet %d\n", ctx->recv_payload->id);
         if (is_server)
         {
             // Make sure the send buffer is not being used by an outgoing packet.
             BUSY_WAIT (ctx->pending & PINGPONG_SEND_WRID);
-            memcpy (ctx->send_buf, ctx->recv_buf, PACKET_SIZE);
-            ctx->send_payload->ts[1] = ts;
-            ctx->send_payload->ts[2] = get_time_ns ();
+            ctx->recv_payload->ts[1] = ts;
+            ctx->recv_payload->ts[2] = get_time_ns ();
             // LOG (stdout, "Sending back packet %d\n", ctx->send_payload->id);
-            if (pp_post_send (ctx))
+            if (pp_post_send (ctx, (uintptr_t) ctx->recv_buf, ctx->recv_mr->lkey))
             {
                 LOG (stderr, "Couldn't post send\n");
                 return 1;
@@ -352,7 +352,7 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
         return 1;
     }
 
-    ctx->pending &= ~(int)wc.wr_id;
+    ctx->pending &= ~(int) wc.wr_id;
 
     return 0;
 }
@@ -406,7 +406,7 @@ int pp_send_single_packet (char *buf __unused, const int packet_id, struct socka
     *ctx->send_payload = new_pingpong_payload (packet_id);
     ctx->send_payload->ts[0] = get_time_ns ();
 
-    int ret = pp_post_send (ctx);
+    int ret = pp_post_send (ctx, (uintptr_t) ctx->send_buf, ctx->send_mr->lkey);
     if (ret)
     {
         LOG (stderr, "Couldn't post send\n");

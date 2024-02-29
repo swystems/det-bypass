@@ -7,7 +7,7 @@ if (NOT DEBUG)
 endif ()
 add_definitions(-DDEBUG=${DEBUG})
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O1 -g -Wall -Werror -Wextra -Wpedantic")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -g -Wall -Werror -Wextra -Wpedantic")
 
 link_libraries(ibverbs)
 file(GLOB SOURCES src/*.c ../common/*.c)
