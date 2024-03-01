@@ -267,16 +267,16 @@ void *thread_send_packets (void *args)
 
     for (uint64_t id = 1; id <= data->iters; ++id)
     {
-
+        uint64_t __start = get_time_ns ();
         int ret = data->send_packet (data->base_packet, id, data->sock_addr, data->aux);
         if (ret < 0)
         {
             PERROR ("data->send_packet");
             return NULL;
         }
-        //LOG (stdout, "Sent packet %lu\n", id);
-
-        pp_sleep (data->interval);
+        uint64_t interval = get_time_ns () - __start;
+        if (interval < data->interval)
+            pp_sleep (data->interval - interval);
     }
 
     free (data->base_packet);
