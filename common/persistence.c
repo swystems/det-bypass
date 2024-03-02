@@ -50,7 +50,7 @@ int persistence_write_all_timestamps (persistence_agent_t *agent, const struct p
     }
 
     // print the paylaod id to file
-    if (fprintf (agent->data->file, "%llu: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]) < 0)
+    if (fprintf (agent->data->file, "%llu %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]) < 0)
     {
         LOG (stderr, "ERROR: Could not write to persistence file\n");
         return -1;

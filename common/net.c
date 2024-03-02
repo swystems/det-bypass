@@ -323,3 +323,8 @@ int start_sending_packets (uint64_t iters, uint64_t interval, char *base_packet,
 
     return 0;
 }
+
+pthread_t get_sender_thread (void)
+{
+    return sender_thread;
+}
