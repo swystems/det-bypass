@@ -8,6 +8,8 @@
 #include <linux/if_packet.h>
 #include <linux/in.h>
 #include <linux/ip.h>
+#include <linux/net_tstamp.h>
+#include <linux/sockios.h>
 #include <linux/types.h>
 #include <net/if.h>
 #include <pthread.h>
@@ -139,3 +141,19 @@ int exchange_eth_ip_addresses (const int ifindex, const char *server_ip, bool is
  * @return
  */
 int exchange_data (const char *server_ip, bool is_server, uint32_t packet_size, uint8_t *buffer, uint8_t *out_buffer);
+
+/**
+ * Enable hardware timestamps on the given interface.
+ *
+ * @param ifname the name of the interface
+ * @return 0 on success, -1 on failure
+ */
+int enable_hw_timestamps (const char *ifname);
+
+/**
+ * Disable hardware timestamps on the given interface.
+ *
+ * @param ifname the name of the interface
+ * @return 0 on success, -1 on failure
+ */
+int disable_hw_timestamps (const char *ifname);

@@ -345,6 +345,17 @@ int detach_pingpong_xdp (int ifindex)
     return detach_xdp (obj, prog_name, ifindex, pinpath);
 }
 
+static char *ifname;
+
+void cleanup (void)
+{
+    if (ifname)
+    {
+        disable_hw_timestamps (ifname);
+    }
+    detach_pingpong_xdp (if_nametoindex (ifname));
+}
+
 int main (int argc, char **argv)
 {
 #if DEBUG
@@ -356,7 +367,7 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    char *ifname = argv[1];
+    ifname = argv[1];
     char *action = argv[2];
 
     int ifindex = if_nametoindex (ifname);
@@ -365,6 +376,14 @@ int main (int argc, char **argv)
         perror ("if_nametoindex");
         return EXIT_FAILURE;
     }
+
+    if (enable_hw_timestamps (ifname))
+    {
+        fprintf (stderr, "ERR: enable_hw_timestamps failed\n");
+        return EXIT_FAILURE;
+    }
+
+    atexit (cleanup);
 
     if (strcmp (action, "start") == 0)
     {

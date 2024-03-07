@@ -5,6 +5,9 @@
 #include <linux/if_packet.h>
 #include <linux/ip.h>
 
+extern int bpf_xdp_metadata_rx_timestamp (const struct xdp_md *ctx,
+                                          __u64 *timestamp) __ksym;
+
 struct {
     __uint (type, BPF_MAP_TYPE_ARRAY);
     __uint (map_flags, BPF_F_MMAPABLE);
@@ -79,8 +82,6 @@ int add_packet_to_map (struct pingpong_payload *payload)
         return -1;
     }
 
-    bpf_printk ("Adding packet id: %u at index: %u\n", payload->id, key);
-
     *old_payload = *payload;
 
     return 0;
@@ -114,6 +115,16 @@ int xdp_main (struct xdp_md *ctx)
         bpf_printk ("Invalid pingpong payload.\n");
         return XDP_PASS;
     }
+
+    __u64 ts = 0;
+    int err = bpf_xdp_metadata_rx_timestamp (ctx, &ts);
+    if (err)
+    {
+        bpf_printk ("Failed to get timestamp: %d\n", err);
+        return XDP_PASS;
+    }
+
+    bpf_printk ("NIC timestamp: %llu\n", ts);
 
     add_packet_to_map (payload);
 

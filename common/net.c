@@ -323,3 +323,56 @@ int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet,
 
     return 0;
 }
+
+/**
+ * Enable/Disable the hardware timestamps on a specific interface.
+ * This is done by creating a "fake" socket and setting the hardware timestamps on it. The socket is then close since it's not used.
+ * Pretty ugly way, but it's the only way I could find.
+ *
+ * @param ifname the name of the interface
+ * @param enabled true to enable, false to disable
+ * @return 0 on success, -1 on failure
+ */
+int set_hw_timestamps (const char *ifname, bool enabled)
+{
+    int sockfd = socket (AF_PACKET, SOCK_RAW, htons (ETH_P_PINGPONG));
+    if (sockfd < 0)
+    {
+        perror ("socket");
+        return -1;
+    }
+    struct ifreq ifr;
+    struct hwtstamp_config hwconfig;
+    memset (&ifr, 0, sizeof (ifr));
+    memset (&hwconfig, 0, sizeof (hwconfig));
+    strncpy (ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    ifr.ifr_data = (char *) &hwconfig;
+    if (enabled)
+    {
+        hwconfig.tx_type = HWTSTAMP_TX_ON;
+        hwconfig.rx_filter = HWTSTAMP_FILTER_ALL;
+    }
+    else
+    {
+        hwconfig.tx_type = HWTSTAMP_TX_OFF;
+        hwconfig.rx_filter = HWTSTAMP_FILTER_NONE;
+    }
+
+    if (ioctl (sockfd, SIOCSHWTSTAMP, &ifr) < 0)
+    {
+        perror ("ioctl");
+        return -1;
+    }
+    close (sockfd);
+    return 0;
+}
+
+int enable_hw_timestamps (const char *ifname)
+{
+    return set_hw_timestamps (ifname, true);
+}
+
+int disable_hw_timestamps (const char *ifname)
+{
+    return set_hw_timestamps (ifname, false);
+}
