@@ -17,7 +17,7 @@
 
 #define IB_MTU (pp_mtu_to_enum (PACKET_SIZE))
 
-#define RECEIVE_DEPTH 1
+#define QUEUE_SIZE 16
 #define DEFAULT_PORT 18515
 #define IB_PORT 1
 
@@ -27,8 +27,8 @@
 persistence_agent_t *persistence_agent;
 
 enum {
-    PINGPONG_RECV_WRID = 1,
-    PINGPONG_SEND_WRID = 2,
+    PINGPONG_SEND_WRID = 1,
+    PINGPONG_RECV_WRID = 2,
 };
 
 void usage (char *prog)
@@ -41,7 +41,6 @@ void usage (char *prog)
 }
 
 static int page_size;
-static int available_recv = 0;
 
 struct pingpong_context {
     atomic_uint_fast8_t pending;
@@ -60,8 +59,8 @@ struct pingpong_context {
     uint8_t *send_buf;
     struct pingpong_payload *send_payload;
 
-    uint8_t *recv_buf;
-    struct pingpong_payload *recv_payload;
+    uint8_t *recv_bufs;
+    struct pingpong_payload *recv_payloads[QUEUE_SIZE];
 };
 
 int init_pp_buffer (void **buffer, size_t size)
@@ -91,12 +90,17 @@ struct pingpong_context *pp_init_context (struct ibv_device *ib_dev)
         goto clean_ctx;
     }
     ctx->send_payload = (struct pingpong_payload *) (ctx->send_buf + 40);
-    if (init_pp_buffer ((void **) &ctx->recv_buf, PACKET_SIZE))
+
+    if (init_pp_buffer ((void **) &ctx->recv_bufs, PACKET_SIZE * QUEUE_SIZE))
     {
         LOG (stderr, "Couldn't allocate recv_buf\n");
         goto clean_send_buf;
     }
-    ctx->recv_payload = (struct pingpong_payload *) (ctx->recv_buf + 40);
+
+    for (unsigned i = 0; i < QUEUE_SIZE; ++i)
+    {
+        ctx->recv_payloads[i] = (struct pingpong_payload *) (ctx->recv_bufs + i * PACKET_SIZE + 40);
+    }
 
     ctx->context = ibv_open_device (ib_dev);
     if (!ctx->context)
@@ -118,14 +122,14 @@ struct pingpong_context *pp_init_context (struct ibv_device *ib_dev)
         LOG (stderr, "Couldn't register MR for send_buf\n");
         goto clean_pd;
     }
-    ctx->recv_mr = ibv_reg_mr (ctx->pd, ctx->recv_buf, PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
+    ctx->recv_mr = ibv_reg_mr (ctx->pd, ctx->recv_bufs, QUEUE_SIZE * PACKET_SIZE, IBV_ACCESS_LOCAL_WRITE);
     if (!ctx->recv_mr)
     {
         LOG (stderr, "Couldn't register MR for recv_buf\n");
         goto clean_send_mr;
     }
 
-    ctx->cq = ibv_create_cq (ctx->context, RECEIVE_DEPTH, NULL, NULL, 0);
+    ctx->cq = ibv_create_cq (ctx->context, QUEUE_SIZE, NULL, NULL, 0);
     if (!ctx->cq)
     {
         LOG (stderr, "Couldn't create CQ\n");
@@ -139,7 +143,7 @@ struct pingpong_context *pp_init_context (struct ibv_device *ib_dev)
             .recv_cq = ctx->cq,
             .cap = {
                 .max_send_wr = 1,
-                .max_recv_wr = RECEIVE_DEPTH,
+                .max_recv_wr = QUEUE_SIZE,
                 .max_send_sge = 1,
                 .max_recv_sge = 1},
             .qp_type = IBV_QPT_UD,
@@ -197,7 +201,7 @@ clean_context:
     ibv_close_device (ctx->context);
 
 clean_recv_buf:
-    free (ctx->recv_buf);
+    free (ctx->recv_bufs);
 
 clean_send_buf:
     free (ctx->send_buf);
@@ -251,32 +255,33 @@ int pp_close_context (struct pingpong_context *ctx)
         return 1;
     }
 
-    free (ctx->recv_buf);
+    free (ctx->recv_bufs);
     free (ctx->send_buf);
     free (ctx);
     return 0;
 }
 
-int pp_post_recv (struct pingpong_context *ctx, int n)
+int pp_post_recv (struct pingpong_context *ctx, int queue_idx)
 {
     struct ibv_sge list = {
-        .addr = (uintptr_t) ctx->recv_buf,
+        .addr = (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE,
         .length = PACKET_SIZE,
         .lkey = ctx->recv_mr->lkey};
     struct ibv_recv_wr wr = {
-        .wr_id = PINGPONG_RECV_WRID,
+        .wr_id = PINGPONG_RECV_WRID + queue_idx,
         .sg_list = &list,
         .num_sge = 1};
     struct ibv_recv_wr *bad_wr;
-    int i;
 
-    for (i = 0; i < n; ++i)
-        if (ibv_post_recv (ctx->qp, &wr, &bad_wr))
-            break;
+    if (ibv_post_recv (ctx->qp, &wr, &bad_wr))
+    {
+        LOG (stderr, "Couldn't post receive for queue_idx %d\n", queue_idx);
+        return 0;
+    }
 
-    //LOG (stdout, "Posted %d receives\n", i);
+    //LOG (stdout, "Posted receive for queue_idx %d\n", queue_idx);
 
-    return i;
+    return 1;
 }
 int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey)
 {
@@ -312,47 +317,43 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
         return 1;
     }
 
-    switch ((int) wc.wr_id)
+    if (wc.wr_id == PINGPONG_SEND_WRID)
     {
-    case PINGPONG_SEND_WRID:
-        break;
-    case PINGPONG_RECV_WRID:
-        // LOG (stdout, "Received packet %d\n", ctx->recv_payload->id);
-        if (is_server)
-        {
-            // Make sure the send buffer is not being used by an outgoing packet.
-            BUSY_WAIT (ctx->pending & PINGPONG_SEND_WRID);
-            ctx->recv_payload->ts[1] = ts;
-            ctx->recv_payload->ts[2] = get_time_ns ();
-            // LOG (stdout, "Sending back packet %d\n", ctx->send_payload->id);
-            if (pp_post_send (ctx, (uintptr_t) ctx->recv_buf, ctx->recv_mr->lkey))
-            {
-                LOG (stderr, "Couldn't post send\n");
-                return 1;
-            }
-        }
-        else
-        {
-            ctx->recv_payload->ts[3] = get_time_ns ();
-            persistence_agent->write (persistence_agent, ctx->recv_payload);
-        }
+        ctx->pending &= ~(int) wc.wr_id;
+        return 0;
+    }
 
-        if (--available_recv <= 1)
-        {
-            available_recv += pp_post_recv (ctx, RECEIVE_DEPTH - available_recv);
-            if (UNLIKELY (available_recv < RECEIVE_DEPTH))
-            {
-                LOG (stderr, "Couldn't post enough receives\n");
-                return 1;
-            }
-        }
-        break;
-    default:
+    if (wc.wr_id < PINGPONG_RECV_WRID || wc.wr_id >= PINGPONG_RECV_WRID + QUEUE_SIZE)
+    {
         LOG (stderr, "Completion for unknown wr_id %d\n", (int) wc.wr_id);
         return 1;
     }
 
-    ctx->pending &= ~(int) wc.wr_id;
+    uint32_t queue_idx = wc.wr_id - PINGPONG_RECV_WRID;
+    // LOG (stdout, "Received packet on queue_idx %d\n", queue_idx);
+    if (is_server)
+    {
+        // Make sure the send buffer is not being used by an outgoing packet.
+        ctx->recv_payloads[queue_idx]->ts[1] = ts;
+        ctx->recv_payloads[queue_idx]->ts[2] = get_time_ns ();
+        // LOG (stdout, "Sending back packet %d\n", ctx->send_payload->id);
+        if (pp_post_send (ctx, (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE, ctx->recv_mr->lkey))
+        {
+            LOG (stderr, "Couldn't post send\n");
+            return 1;
+        }
+    }
+    else
+    {
+        ctx->recv_payloads[queue_idx]->ts[3] = get_time_ns ();
+        persistence_agent->write (persistence_agent, ctx->recv_payloads[queue_idx]);
+    }
+
+    if (UNLIKELY (pp_post_recv (ctx, queue_idx) == 0))
+    {
+        LOG (stderr, "Couldn't post receive on queue_idx %d\n", queue_idx);
+        return 1;
+    }
 
     return 0;
 }
@@ -496,7 +497,15 @@ int main (int argc, char **argv)
 
     ctx->pending = PINGPONG_RECV_WRID;
 
-    available_recv = pp_post_recv (ctx, RECEIVE_DEPTH);
+    for (int i = 0; i < QUEUE_SIZE; ++i)
+    {
+        if (!pp_post_recv (ctx, i))
+        {
+            fprintf (stderr, "Couldn't post receive\n");
+            pp_close_context (ctx);
+            return 1;
+        }
+    }
 
     if (!is_server)
     {
@@ -527,8 +536,8 @@ int main (int argc, char **argv)
                 return 1;
             }
 
-            if (wc[i].wr_id == PINGPONG_RECV_WRID)
-                recv_idx = max (recv_idx, ctx->recv_payload->id);
+            if (wc[i].wr_id >= PINGPONG_RECV_WRID)
+                recv_idx = max (recv_idx, ctx->recv_payloads[wc[i].wr_id - PINGPONG_RECV_WRID]->id);
         }
     }
 
