@@ -83,7 +83,7 @@
 
 // Size of the map used to exchange the pingpong packets
 // The bigger, the slower the polling but the less likely to lose packets
-#define PACKETS_MAP_SIZE 16
+#define PACKETS_MAP_SIZE 128
 
 // Random magic number for pingpong packets
 #define PINGPONG_MAGIC 0x8badbeef

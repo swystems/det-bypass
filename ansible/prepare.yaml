@@ -39,7 +39,7 @@
           shell: |
             update-grub2
 
-    - name: Update kernel to ${kernel_version}
+    - name: Update kernel to {{ kernel_version }}
       block:
         - name: Download ubuntu-mainline-kernel.sh
           become: yes
@@ -57,7 +57,7 @@
         - name: Fix apt packages
           become: yes
           shell: |
-              apt --fix-broken install -y
+            apt --fix-broken install -y
 
     - name: Add /usr/local/lib to ldconfig
       block:

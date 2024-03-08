@@ -1,0 +1,22 @@
+---
+- hosts: rx_nodes
+  gather_facts: no
+  tasks:
+    - name: Run RDMA UD (Server)
+      become: yes
+      shell: |
+        cd {{ base_dir }}/rdma/build
+        {{ execute_command }}./ud_pingpong {{ item }} 0 start {{ packets }}
+      with_items: "{{ ibdevs }}"
+      async: "{{ timeout }}"
+      poll: 0
+
+- hosts: tx_nodes
+  gather_facts: no
+  tasks:
+    - name: Run RDMA UD (Client)
+      become: yes
+      shell: |
+        cd {{ base_dir }}/rdma/build
+        {{ execute_command }}./ud_pingpong {{ item }} 0 start {{ packets }} {{ interval }} {{ hostvars[groups['rx_nodes'][0]]['ip'] }}
+      with_items: "{{ ibdevs }}"

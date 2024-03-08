@@ -1,0 +1,49 @@
+---
+- hosts: all
+  gather_facts: True
+  gather_subset:
+    - "!all"
+  tasks:
+    - name: Upload source files
+      block:
+        - name: Create list of files to upload
+          # find all files in the "{{ playbook_dir }}/../", excluding ".*", "ansible/" and "analysis/"
+          find:
+              paths: "{{ playbook_dir }}/.."
+              patterns: "*"
+              excludes:
+                - ".*"
+                - "ansible"
+                - "analysis"
+              file_type: any
+          delegate_to: localhost
+          register: files_to_upload
+        - name: Upload files
+          become: yes
+          synchronize:
+            src: "{{ item.path }}"
+            dest: "{{ base_dir }}"
+            rsync_opts: "--chown={{ ansible_user }}:{{ ansible_user }}"
+          with_items: "{{ files_to_upload.files }}"
+
+    - name: Build pingpong programs
+      block:
+        - name: Build XDP programs
+          become: yes
+          shell: |
+            cd {{ base_dir }}/xdp/build
+            cmake ..
+            make clean
+            make
+        - name: Build RDMA programs
+          become: yes
+          shell: |
+            cd {{ base_dir }}/rdma/build
+            cmake ..
+            make clean
+            make
+
+    - name: Reload ldconfig
+      become: yes
+      shell: |
+        ldconfig

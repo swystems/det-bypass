@@ -1,0 +1,26 @@
+---
+- hosts: rx_nodes
+  gather_facts: no
+  tasks:
+    - name: Run AF_XDP (Server)
+      become: yes
+      shell: |
+        cd {{ base_dir }}/xdp/build
+        {{ execute_command }}./pp_sock {{ item }} remove
+        {{ execute_command }}./pp_sock {{ item }} start {{ packets }}
+        {{ execute_command }}./pp_sock {{ item }} remove
+      with_items: "{{ devs }}"
+      async: "{{ timeout }}"
+      poll: 0
+
+- hosts: tx_nodes
+  gather_facts: no
+  tasks:
+    - name: Run AF_XDP (Client)
+      become: yes
+      shell: |
+        cd {{ base_dir }}/xdp/build
+        {{ execute_command }}./pp_sock {{ item }} remove
+        {{ execute_command }}./pp_sock {{ item }} start {{ packets }} {{ interval }} {{ hostvars[groups['rx_nodes'][0]]['ip'] }}
+        {{ execute_command }}./pp_sock {{ item }} remove
+      with_items: "{{ devs }}"
