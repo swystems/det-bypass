@@ -8,6 +8,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../common/bitset.h"
 #include "../common/common.h"
 #include "../common/net.h"
 #include "../common/persistence.h"
@@ -17,7 +18,7 @@
 
 #define IB_MTU (pp_mtu_to_enum (PACKET_SIZE))
 
-#define QUEUE_SIZE 16
+#define QUEUE_SIZE 128
 #define DEFAULT_PORT 18515
 #define IB_PORT 1
 
@@ -26,9 +27,15 @@
 
 persistence_agent_t *persistence_agent;
 
+/**
+ * Work Request IDs.
+ * Range [0, QUEUE_SIZE) is used for send WRs, [QUEUE_SIZE, 2*QUEUE_SIZE) is used for receive WRs.
+ * The different IDs in the reception are used to determine which queue index was used to receive the packet.
+ * The IDs in the send are used only by the server, in order to remember which queue index is now available to receive a new packet, i.e. to be used in a new recv WR.
+ */
 enum {
-    PINGPONG_SEND_WRID = 1,
-    PINGPONG_RECV_WRID = 2,
+    PINGPONG_SEND_WRID = 0,
+    PINGPONG_RECV_WRID = QUEUE_SIZE,
 };
 
 void usage (char *prog)
@@ -43,7 +50,12 @@ void usage (char *prog)
 static int page_size;
 
 struct pingpong_context {
-    atomic_uint_fast8_t pending;
+    /**
+     * Bitset to keep track of the send WRs that are still pending.
+     * On the client only the first bit is used, since there is only one buffer used to send (`send_buf`).
+     * On the server, each bit represents a different queue index, keeping track of the buffers that have a pending send request.
+     */
+    BITSET_DECLARE (pending_send, QUEUE_SIZE);
     int send_flags;
 
     struct ibv_context *context;
@@ -81,6 +93,8 @@ struct pingpong_context *pp_init_context (struct ibv_device *ib_dev)
     struct pingpong_context *ctx = malloc (sizeof (struct pingpong_context));
     if (!ctx)
         return NULL;
+
+    BITSET_INIT (ctx->pending_send, QUEUE_SIZE);
 
     ctx->send_flags = IBV_SEND_SIGNALED;
 
@@ -142,7 +156,8 @@ struct pingpong_context *pp_init_context (struct ibv_device *ib_dev)
             .send_cq = ctx->cq,
             .recv_cq = ctx->cq,
             .cap = {
-                .max_send_wr = 1,
+                // Since RECV requests are posted for each queue index when the corresponding send WR is completed, there could be at most `QUEUE_SIZE` SEND WRs in flight.
+                .max_send_wr = QUEUE_SIZE,
                 .max_recv_wr = QUEUE_SIZE,
                 .max_send_sge = 1,
                 .max_recv_sge = 1},
@@ -276,16 +291,25 @@ int pp_post_recv (struct pingpong_context *ctx, int queue_idx)
     if (ibv_post_recv (ctx->qp, &wr, &bad_wr))
     {
         LOG (stderr, "Couldn't post receive for queue_idx %d\n", queue_idx);
-        return 0;
+        return 1;
     }
 
-    //LOG (stdout, "Posted receive for queue_idx %d\n", queue_idx);
-
-    return 1;
+    return 0;
 }
-int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey)
+
+/**
+ * Post a send WR to the queue.
+ * This function can be called only when the `buffer` is not being used by a pending WR.
+ *
+ * @param ctx the pingpong context
+ * @param buffer the buffer containing the packet to send
+ * @param lkey the local key of the buffer, obtained from the MR
+ * @param queue_idx if the packet being sent is the response to a received packet, this is the queue index used to receive the packet. Otherwise, -1.
+ * @return 0 on success, -1 on failure
+ */
+int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey, int queue_idx)
 {
-    BUSY_WAIT (ctx->pending & PINGPONG_SEND_WRID);
+    LOG (stdout, "Waiting for lock\n");
     const struct ib_node_info *remote = &ctx->remote_info;
     struct ibv_sge list = {
         .addr = buffer + 40,
@@ -293,7 +317,7 @@ int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey)
         .lkey = lkey};
 
     struct ibv_send_wr wr = {
-        .wr_id = PINGPONG_SEND_WRID,
+        .wr_id = queue_idx == -1 ? PINGPONG_SEND_WRID : PINGPONG_SEND_WRID + queue_idx,
         .sg_list = &list,
         .num_sge = 1,
         .opcode = IBV_WR_SEND,
@@ -304,7 +328,7 @@ int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey)
                 .remote_qpn = remote->qpn,
                 .remote_qkey = 0x11111111}}};
     struct ibv_send_wr *bad_wr;
-    ctx->pending |= PINGPONG_SEND_WRID;
+    BITSET_SET (ctx->pending_send, queue_idx != -1 ? queue_idx : 0);
     return ibv_post_send (ctx->qp, &wr, &bad_wr);
 }
 
@@ -317,27 +341,40 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
         return 1;
     }
 
-    if (wc.wr_id == PINGPONG_SEND_WRID)
-    {
-        ctx->pending &= ~(int) wc.wr_id;
-        return 0;
-    }
-
-    if (wc.wr_id < PINGPONG_RECV_WRID || wc.wr_id >= PINGPONG_RECV_WRID + QUEUE_SIZE)
+    // Unknown WRID
+    if (wc.wr_id >= PINGPONG_RECV_WRID + QUEUE_SIZE)
     {
         LOG (stderr, "Completion for unknown wr_id %d\n", (int) wc.wr_id);
         return 1;
     }
 
+    // Send WRID
+    if (wc.wr_id < PINGPONG_SEND_WRID + QUEUE_SIZE)
+    {
+        // Received a completion for a send WR, the corresponding bit can be unset.
+        BITSET_CLEAR (ctx->pending_send, wc.wr_id - PINGPONG_SEND_WRID);
+
+        // Only the server needs to wait for the completion of a send operation in order to post the receive.
+        // Since the client reads the content immediately and only once, the recv is posted immediatly because overwriting the buffer is not a problem.
+        if (is_server && UNLIKELY (pp_post_recv (ctx, wc.wr_id - PINGPONG_SEND_WRID)))
+        {
+            LOG (stderr, "Couldn't post receive on queue_idx %lu\n", wc.wr_id - PINGPONG_SEND_WRID);
+            return 1;
+        }
+        return 0;
+    }
+
+    // Recv WRID
     uint32_t queue_idx = wc.wr_id - PINGPONG_RECV_WRID;
     // LOG (stdout, "Received packet on queue_idx %d\n", queue_idx);
     if (is_server)
     {
         // Make sure the send buffer is not being used by an outgoing packet.
+        BUSY_WAIT (BITSET_TEST (ctx->pending_send, queue_idx));
         ctx->recv_payloads[queue_idx]->ts[1] = ts;
         ctx->recv_payloads[queue_idx]->ts[2] = get_time_ns ();
-        // LOG (stdout, "Sending back packet %d\n", ctx->send_payload->id);
-        if (pp_post_send (ctx, (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE, ctx->recv_mr->lkey))
+        LOG (stdout, "Sending back packet %d from queue %d\n", ctx->recv_payloads[queue_idx]->id, queue_idx);
+        if (pp_post_send (ctx, (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE, ctx->recv_mr->lkey, queue_idx))
         {
             LOG (stderr, "Couldn't post send\n");
             return 1;
@@ -347,12 +384,13 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
     {
         ctx->recv_payloads[queue_idx]->ts[3] = get_time_ns ();
         persistence_agent->write (persistence_agent, ctx->recv_payloads[queue_idx]);
-    }
 
-    if (UNLIKELY (pp_post_recv (ctx, queue_idx) == 0))
-    {
-        LOG (stderr, "Couldn't post receive on queue_idx %d\n", queue_idx);
-        return 1;
+        // The client can post the receive for the used queue index immediately, since the packet is not used anymore.
+        if (UNLIKELY (pp_post_recv (ctx, queue_idx)))
+        {
+            LOG (stderr, "Couldn't post receive on queue_idx %d\n", queue_idx);
+            return 1;
+        }
     }
 
     return 0;
@@ -404,15 +442,14 @@ int pp_ib_connect (struct pingpong_context *ctx, int gidx, struct ib_node_info *
 int pp_send_single_packet (char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
+
+    // Make sure the buffer is available before writing on it.
+    BUSY_WAIT (BITSET_TEST (ctx->pending_send, 0));
+
     *ctx->send_payload = new_pingpong_payload (packet_id);
     ctx->send_payload->ts[0] = get_time_ns ();
 
-    int ret = pp_post_send (ctx, (uintptr_t) ctx->send_buf, ctx->send_mr->lkey);
-    if (ret)
-    {
-        LOG (stderr, "Couldn't post send\n");
-    }
-    return ret;
+    return pp_post_send (ctx, (uintptr_t) ctx->send_buf, ctx->send_mr->lkey, -1);
 }
 
 int main (int argc, char **argv)
@@ -447,7 +484,7 @@ int main (int argc, char **argv)
     }
 
     if (!is_server)
-        persistence_agent = persistence_init ("ud.dat", 0);
+        persistence_agent = persistence_init ("ud.dat", PERSISTENCE_F_ALL_TIMESTAMPS);
 
     LOG (stdout, "Server IP: %s\n", server_ip);
 
@@ -495,11 +532,9 @@ int main (int argc, char **argv)
 
     LOG (stdout, "Connected\n");
 
-    ctx->pending = PINGPONG_RECV_WRID;
-
     for (int i = 0; i < QUEUE_SIZE; ++i)
     {
-        if (!pp_post_recv (ctx, i))
+        if (pp_post_recv (ctx, i))
         {
             fprintf (stderr, "Couldn't post receive\n");
             pp_close_context (ctx);
