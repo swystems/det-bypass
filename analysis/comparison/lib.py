@@ -78,6 +78,23 @@ def copy_remote_file (remote_addr: str, local_path: str):
     import os
     if not os.path.isfile(local_path):
         os.system(f"rsync -r {remote_addr} {local_path}")
+    else:
+        print(f"File {local_path} exists, skipping copy from remote machine...")
+
+
+def compute_experiment_data (remote_file, local_file):
+    """
+    Utility function to retrieve and compute all data about an experiment run.
+    It just consists in a combination of functions in this file.
+
+    :return a tuple (timestamps, diffs, latency, jitter)
+    """
+    copy_remote_file (remote_file, local_file)
+    ts = parse_timestamps (local_file)
+    diffs = compute_diffs(ts)
+    lat = compute_latencies(ts)
+    jitter = compute_jitter (lat)
+    return (ts,diffs,lat,jitter)
 
 
 def to_unit (value: int, base_unit: str, mult: int = 0) -> str:
@@ -106,12 +123,26 @@ def to_unit (value: int, base_unit: str, mult: int = 0) -> str:
     
     
 class Settings:
-    def __init__(self, iters, interval, **kwargs):
-        self.iters = iters
-        self.interval = interval
+    def __init__(self, iters: int, interval: int, **kwargs):
+        """
+        Create a settings instance with the given data.
+        
+        :param iters: Number of iterations of the experiment
+        :param interval: Interval in ns of packet send
+        :param kwargs: Any other option passed using kwargs will be used in the string generation
+        """
+        self.iters = int(iters)
+        self.interval = int(interval)
         self.kwargs = kwargs
 
     def __str__(self):
+        """
+        Generate a string representing the settings to be used in filenames.
+        
+        Example:
+        > Settings(iters=100, interval=1000000, testkey='testvalue').pretty_format()
+        100-1ms-testkey_testvalue
+        """
         kwarg_strs = '-'.join(f"{key}_{value}" for key,value in self.kwargs.items())
         parts = [to_unit (self.iters, ''), to_unit (self.interval, 's', -9)]
         if len(self.kwargs) > 0:
@@ -119,6 +150,13 @@ class Settings:
         return '-'.join(parts)
 
     def pretty_format(self):
+        """
+        Generate a string representing the settings to be human-readable
+        
+        Example:
+        > Settings(iters=100, interval=1000000).pretty_format()
+        Settings: Iterations 100, Interval 1ms
+        """
         kwarg_strs = ', '.join(f"{key.capitalize()} {value}" for key,value in self.kwargs.items())
         parts = [f"Iterations {to_unit (self.iters, '')}", f"Interval {to_unit (self.interval, 's', -9)}"]
         if len(self.kwargs) > 0:
