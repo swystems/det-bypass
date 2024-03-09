@@ -1,13 +1,14 @@
 ---
 - hosts: all
   gather_facts: False
-  # gather_subset:
-  #   - "!all"
   tasks:
-    - name: deploy repo
+    - name: Upload source files
+      become: yes
       synchronize:
-        src: ../../
-        dest: det-bypass
+        src: "{{ playbook_dir }}/.."
+        dest: "{{ base_dir }}"
         rsync_opts:
-        - "--exclude=.git"
-        - "--exclude=analysis/" 
+          - "--exclude=.*"
+          - "--exclude=analysis/"
+          - "--exclude=ansible/"
+          - "--chown={{ ansible_user }}:{{ ansible_user }}"

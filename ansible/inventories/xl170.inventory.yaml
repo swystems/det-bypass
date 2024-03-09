@@ -19,7 +19,7 @@ all:
     ansible_user: mdr
     isolated_cores: "11"
     cpu_freq: 2400000000 # 2.4 GHz
-    base_dir: "/users/{{ ansible_user }}"
+    base_dir: "/users/{{ ansible_user }}/det-bypass"
 
 tx_nodes:
   hosts:
