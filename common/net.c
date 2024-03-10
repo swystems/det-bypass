@@ -106,17 +106,12 @@ int retrieve_local_mac (int ifindex, uint8_t *out_mac)
     return 0;
 }
 
-int exchange_addresses (const int ifindex, const char *server_ip, bool is_server,
-                        uint8_t *src_mac, uint8_t *dest_mac,
-                        uint32_t *src_ip, uint32_t *dest_ip)
+int exchange_data (const char *server_ip, bool is_server, uint32_t packet_size, uint8_t *buffer, uint8_t *out_buffer)
 {
-    retrieve_local_mac (ifindex, src_mac);
-    retrieve_local_ip (ifindex, src_ip);
-
     int sock = socket (AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
     {
-        perror ("socket");
+        PERROR ("socket");
         return -1;
     }
 
@@ -128,72 +123,80 @@ int exchange_addresses (const int ifindex, const char *server_ip, bool is_server
     int ret = bind (sock, (struct sockaddr *) &local_addr, sizeof (struct sockaddr_in));
     if (ret < 0)
     {
-        perror ("bind");
+        PERROR ("bind");
         return -1;
     }
 
     if (!is_server)
     {
-        // send my info to the server
         struct sockaddr_in server_addr;
         server_addr.sin_family = AF_INET;
         server_addr.sin_port = htons (1234);
         server_addr.sin_addr.s_addr = inet_addr (server_ip);
 
-        char buf[INFO_PACKET_SIZE];
-        memcpy (buf, src_mac, ETH_ALEN);
-        memcpy (buf + ETH_ALEN, src_ip, sizeof (uint32_t));
-        int ret = sendto (sock, buf, INFO_PACKET_SIZE, 0, (struct sockaddr *) &server_addr, sizeof (struct sockaddr_in));
+        int ret = sendto (sock, buffer, packet_size, 0, (struct sockaddr *) &server_addr, sizeof (struct sockaddr_in));
         if (ret < 0)
         {
-            perror ("sendto");
+            PERROR ("sendto");
             return -1;
         }
 
-        // wait for the server message containing its info
-        memset (buf, 0, INFO_PACKET_SIZE);
-        ret = recvfrom (sock, buf, INFO_PACKET_SIZE, 0, NULL, NULL);
+        memset (out_buffer, 0, packet_size);
+        ret = recvfrom (sock, out_buffer, packet_size, 0, NULL, NULL);
         if (ret < 0)
         {
-            perror ("recvfrom");
+            PERROR ("recvfrom");
             return -1;
         }
-
-        memcpy (dest_mac, buf, ETH_ALEN);
-        memcpy (dest_ip, buf + ETH_ALEN, sizeof (uint32_t));
     }
     else
     {
-        // wait for the client message containing its info
-        char buf[INFO_PACKET_SIZE];
-        memset (buf, 0, INFO_PACKET_SIZE);
-        ret = recvfrom (sock, buf, INFO_PACKET_SIZE, 0, NULL, NULL);
+        memset (out_buffer, 0, packet_size);
+        struct sockaddr_in client_addr;
+        socklen_t client_addr_len = sizeof (struct sockaddr_in);
+
+        ret = recvfrom (sock, out_buffer, packet_size, 0, (struct sockaddr *) &client_addr, &client_addr_len);
         if (ret < 0)
         {
-            perror ("recvfrom");
+            PERROR ("recvfrom");
             return -1;
         }
 
-        memcpy (dest_mac, buf, ETH_ALEN);
-        memcpy (dest_ip, buf + ETH_ALEN, sizeof (uint32_t));
-
-        // send my info to the client
-        struct sockaddr_in client_addr;
-        client_addr.sin_family = AF_INET;
-        client_addr.sin_port = htons (1234);
-        client_addr.sin_addr.s_addr = *dest_ip;
-
-        memcpy (buf, src_mac, ETH_ALEN);
-        memcpy (buf + ETH_ALEN, src_ip, sizeof (uint32_t));
-        ret = sendto (sock, buf, INFO_PACKET_SIZE, 0, (struct sockaddr *) &client_addr, sizeof (struct sockaddr_in));
+        ret = sendto (sock, buffer, packet_size, 0, (struct sockaddr *) &client_addr, sizeof (struct sockaddr_in));
         if (ret < 0)
         {
-            perror ("sendto");
+            PERROR ("sendto");
             return -1;
         }
     }
 
     close (sock);
+
+    return 0;
+}
+
+int exchange_eth_ip_addresses (const int ifindex, const char *restrict server_ip, bool is_server,
+                               uint8_t *restrict src_mac, uint8_t *restrict dest_mac,
+                               uint32_t *restrict src_ip, uint32_t *restrict dest_ip)
+{
+    retrieve_local_mac (ifindex, src_mac);
+    retrieve_local_ip (ifindex, src_ip);
+
+    uint8_t buffer[ETH_IP_INFO_PACKET_SIZE];
+    uint8_t out_buffer[ETH_IP_INFO_PACKET_SIZE];
+
+    memcpy (buffer, src_mac, ETH_ALEN);
+    memcpy (buffer + ETH_ALEN, src_ip, sizeof (uint32_t));
+
+    int ret = exchange_data (server_ip, is_server, ETH_IP_INFO_PACKET_SIZE, buffer, out_buffer);
+    if (ret < 0)
+    {
+        LOG (stderr, "ERR: exchange_data\n");
+        return -1;
+    }
+
+    memcpy (dest_mac, out_buffer, ETH_ALEN);
+    memcpy (dest_ip, out_buffer + ETH_ALEN, sizeof (uint32_t));
 
     return 0;
 }
@@ -253,7 +256,7 @@ struct sender_data {
     char *base_packet;
     struct sockaddr_ll *sock_addr;
     // function to send the packet
-    int (*send_packet) (const char *, const int, struct sockaddr_ll *, void *);
+    send_packet_t send_packet;
     // auxiliary data for the send function
     void *aux;
 };
@@ -262,25 +265,10 @@ void *thread_send_packets (void *args)
 {
     struct sender_data *data = (struct sender_data *) args;
 
-    if (data->base_packet == NULL || data->sock_addr == NULL)
-    {
-        LOG (stderr, "ERR: base_packet or sock_addr is NULL\n");
-        return NULL;
-    }
-
-    struct iphdr *ip = (struct iphdr *) (data->base_packet + sizeof (struct ethhdr));
-
     for (uint64_t id = 1; id <= data->iters; ++id)
     {
-        ip->id = htons (id);
 
-        struct pingpong_payload *payload = packet_payload(data->base_packet);
-        *payload = empty_pingpong_payload ();
-        payload->id = id;
-        payload->phase = 0;
-        payload->ts[0] = get_time_ns ();
-
-        int ret = data->send_packet (data->base_packet, PACKET_SIZE, data->sock_addr, data->aux);
+        int ret = data->send_packet (data->base_packet, id, data->sock_addr, data->aux);
         if (ret < 0)
         {
             PERROR ("data->send_packet");
@@ -299,7 +287,7 @@ void *thread_send_packets (void *args)
 
 static pthread_t sender_thread;
 
-int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, int (*send_packet) (const char *, const int, struct sockaddr_ll *, void *), void *aux)
+int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux)
 {
     struct sender_data *data = malloc (sizeof (struct sender_data));
     if (!data)
@@ -310,13 +298,21 @@ int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet,
 
     data->iters = iters;
     data->interval = interval;
-    data->base_packet = malloc (PACKET_SIZE);
-    data->sock_addr = malloc (sizeof (struct sockaddr_ll));
     data->send_packet = send_packet;
     data->aux = aux;
 
-    memcpy (data->base_packet, base_packet, PACKET_SIZE);
-    memcpy (data->sock_addr, sock_addr, sizeof (struct sockaddr_ll));
+    data->base_packet = NULL;
+    data->sock_addr = NULL;
+    if (base_packet)
+    {
+        data->base_packet = malloc (PACKET_SIZE);
+        memcpy (data->base_packet, base_packet, PACKET_SIZE);
+    }
+    if (sock_addr)
+    {
+        data->sock_addr = malloc (sizeof (struct sockaddr_ll));
+        memcpy (data->sock_addr, sock_addr, sizeof (struct sockaddr_ll));
+    }
 
     int ret = pthread_create (&sender_thread, NULL, thread_send_packets, data);
     if (ret < 0)

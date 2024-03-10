@@ -1,4 +1,4 @@
-#include "common.h"
+#include "../common/common.h"
 #include <bpf/bpf_helpers.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>

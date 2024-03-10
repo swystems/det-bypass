@@ -26,10 +26,10 @@
 #include <linux/if_link.h>
 #include <net/if.h>
 
-#include "common.h"
-#include "src/net.h"
-#include "src/persistence.h"
-#include "src/utils.h"
+#include "../common/common.h"
+#include "../common/net.h"
+#include "../common/persistence.h"
+#include "../common/utils.h"
 #include "src/xdp-loading.h"
 
 #define STATS_THREAD 0
@@ -525,11 +525,17 @@ static void rx_and_process (struct config *cfg,
  * @param aux the socket information structure.
  * @return 0 if the packet was successfully sent, -1 otherwise.
  */
-int client_send_pp_packet (const char *buf, const int buf_len, struct sockaddr_ll *addr __unused, void *aux)
+int client_send_pp_packet (char *buf, const int packet_id, struct sockaddr_ll *addr __unused, void *aux)
 {
+    struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
+    ip->id = htons (packet_id);
+    struct pingpong_payload *payload = packet_payload (buf);
+    *payload = new_pingpong_payload (packet_id);
+    payload->ts[0] = get_time_ns ();
+
     struct xsk_socket_info *socket = (struct xsk_socket_info *) aux;
 
-    int ret = xsk_send_packet (socket, (uint64_t) buf, buf_len, false, true);
+    int ret = xsk_send_packet (socket, (uint64_t) buf, PACKET_SIZE, false, true);
     if (ret)
     {
         LOG (stderr, "Failed to send packet\n");
@@ -620,7 +626,7 @@ int main (int argc __unused, char **argv __unused)
     uint32_t src_ip;
     uint8_t dest_mac[ETH_ALEN];
     uint32_t dest_ip;
-    exchange_addresses (cfg.ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
+    exchange_eth_ip_addresses (cfg.ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
 
     struct bpf_object *obj = read_xdp_file (filename);
     if (obj == NULL)
@@ -689,6 +695,10 @@ int main (int argc __unused, char **argv __unused)
         exit (EXIT_FAILURE);
     }
 
+    START_TIMER ();
+    fprintf (stdout, "Starting experiment\n");
+    fflush (stdout);
+
     if (!is_server)
     {
         persistence_agent = persistence_init (outfile, PERSISTENCE_F_MIN_MAX_LATENCY);
@@ -697,6 +707,10 @@ int main (int argc __unused, char **argv __unused)
 
     /* Receive and count packets than drop them */
     rx_and_process (&cfg, xsk_socket);
+
+    STOP_TIMER ();
+    uint64_t time_taken = (__end - __start) / 1000000LL;
+    fprintf (stdout, "Experiment finished in %lu milliseconds.\n", time_taken);
 
     /* Cleanup */
     xsk_socket__delete (xsk_socket->xsk);
