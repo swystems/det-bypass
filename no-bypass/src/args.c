@@ -3,17 +3,21 @@
 #if __SERVER__
 void nobypass_print_usage (char *prog)
 {
+    printf ("==== Server Program ====\n");
     printf ("Usage: %s -p <packets>\n", prog);
     printf ("\t-p, --packets <packets>\tNumber of packets to process in the experiment.\n");
+    printf ("\nIf you want to run the client program, compile without -DSERVER flag.\n");
 }
 #else
 void nobypass_print_usage (char *prog)
 {
+    printf ("==== Client Program ====\n");
     printf ("Usage: %s -p <packets> -i <interval> -s <server_ip> [-m <measurement>]\n", prog);
     printf ("\t-p, --packets <packets>\tNumber of packets to process in the experiment.\n");
     printf ("\t-i, --interval <interval>\tInterval between each packet in nanoseconds.\n");
     printf ("\t-s, --server <server_ip>\tServer IP address.\n");
     printf ("\t-m, --measurement <measurement>\tMeasurement to perform. 0: All Timestamps, 1: Min/Max latency, 2: Buckets.\n");
+    printf ("\nIf you want to run the server program, compile with -DSERVER flag.\n");
 }
 #endif
 

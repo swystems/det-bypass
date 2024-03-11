@@ -3,14 +3,17 @@
 #if __SERVER__
 void xdp_print_usage (char *prog)
 {
+    printf ("==== Server Program ====\n");
     printf ("Usage: %s -d <ifname> [--remove] [-p <packets>]\n", prog);
     printf ("\t-r, --remove\tRemove XDP program. Only `ifname` is required.\n");
     printf ("\t-d, --dev <ifname>\tInterface to attach XDP program to.\n");
     printf ("\t-p, --packets <packets>\tNumber of packets to process in the experiment.\n");
+    printf ("\nIf you want to run the client program, compile without -DSERVER flag.\n");
 }
 #else
 void xdp_print_usage (char *prog)
 {
+    printf ("==== Client Program ====\n");
     printf ("Usage: %s -d <ifname> [--remove] [-p <packets> -i <interval> -s <server_ip>] [-m <measurement>]\n", prog);
     printf ("\t-r, --remove\tRemove XDP program. Only `ifname` is required.\n");
     printf ("\t-d, --dev <ifname>\tInterface to attach XDP program to.\n");
@@ -18,6 +21,7 @@ void xdp_print_usage (char *prog)
     printf ("\t-i, --interval <interval>\tInterval between each packet in nanoseconds.\n");
     printf ("\t-s, --server <server_ip>\tServer IP address.\n");
     printf ("\t-m, --measurement <measurement>\tMeasurement to perform. 0: All Timestamps, 1: Min/Max latency, 2: Buckets.\n");
+    printf ("\nIf you want to run the server program, compile with -DSERVER flag.\n");
 }
 #endif
 
