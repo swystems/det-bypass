@@ -58,10 +58,9 @@ def plot_latencies(*args, iters=0):
 
 
 def plot_diffs(diffs: np.ndarray, iters=0):
-    fig,axs = plt.subplots(2,2)
+    fig,axs = plt.subplots(2,2,figsize=(12,6),layout="constrained")
+    fig.get_layout_engine().set(w_pad=0.15, h_pad=0.15, hspace=0, wspace=0)
     fig.suptitle("Timestamp difference between consequent packets")
-    fig.tight_layout()
-    fig.set_size_inches(13,6)
     values = np.full([iters,4], None)
     for diff in diffs:
         values[diff[0]-1] = diff[1:]
