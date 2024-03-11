@@ -1,6 +1,7 @@
 #include "../common/common.h"
 #include "../common/net.h"
 #include "../common/persistence.h"
+#include "src/args.h"
 #include <arpa/inet.h>
 #include <getopt.h>
 #include <netinet/in.h>
@@ -14,17 +15,6 @@
 #define PINGPONG_UDP_PORT 12345
 
 persistence_agent_t *persistence_agent;
-
-void usage (FILE *stream, char *prog)
-{
-    fprintf (stream, "Usage: %s -i <iters> [-n <interval ns> -s <server_ip>]\n", prog);
-    fprintf (stream, "       -p, --packets: number of iterations\n");
-    fprintf (stream, "       -i, --interval: interval between packets in ns\n");
-    fprintf (stream, "       -s, --server: server IP address\n");
-    fprintf (stream, "The client requires iters, interval and server IP; the server only requires iters\n");
-    fprintf (stream, "Server example: %s -p 100\n", prog);
-    fprintf (stream, "Client example: %s -p 100 -i 100000 -s 10.10.1.2\n", prog);
-}
 
 int new_socket (void)
 {
@@ -55,7 +45,6 @@ struct sockaddr_in new_sockaddr (const char *ip, uint16_t port)
 
 void start_server (uint32_t iters)
 {
-    LOG (stdout, "Starting server\n");
     int socket = new_socket ();
     // wait for the client to connect
     struct sockaddr_in server_addr;
@@ -115,7 +104,6 @@ int send_single_packet (char *buf, const int packet_idx, struct sockaddr_ll *add
 
 void start_client (uint32_t iters, uint64_t interval, const char *server_ip)
 {
-    LOG (stdout, "Starting client\n");
     int socket = new_socket ();
     struct sockaddr_in server_addr = new_sockaddr (server_ip, PINGPONG_UDP_PORT);
     uint8_t send_buf[PACKET_SIZE];
@@ -145,73 +133,42 @@ void start_client (uint32_t iters, uint64_t interval, const char *server_ip)
     persistence_agent->close (persistence_agent);
 }
 
-static struct option long_options[] = {
-    {"packets", required_argument, 0, 'p'},
-    {"interval", required_argument, 0, 'i'},
-    {"server", required_argument, 0, 's'},
-    {"measurement", required_argument, 0, 'm'},
-    {"help", no_argument, 0, 'h'},
-    {0, 0, 0, 0}};
-
 int main (int argc, char **argv)
 {
+#if __SERVER__
     uint32_t iters = 0;
-    uint64_t interval = 0;
-    char *server_ip = NULL;
-    int persistence_flag = PERSISTENCE_M_ALL_TIMESTAMPS;
-
-    int opt;
-    while ((opt = getopt_long (argc, argv, "p:i:s:m:h", long_options, NULL)) != -1)
+    if (!nobypass_parse_args (argc, argv, &iters))
     {
-        switch (opt)
-        {
-        case 'p':
-            iters = atoi (optarg);
-            break;
-        case 'i':
-            interval = atoi (optarg);
-            break;
-        case 's':
-            server_ip = optarg;
-            break;
-        case 'h':
-            usage (stdout, argv[0]);
-            return EXIT_SUCCESS;
-        case 'm':
-            persistence_flag = pers_measurement_to_flag (atoi (optarg));
-            if (persistence_flag < 0)
-            {
-                fprintf (stderr, "Invalid measurement flag. See %s --help\n", argv[0]);
-                return EXIT_FAILURE;
-            }
-            break;
-        default:
-            usage (stderr, argv[0]);
-            return EXIT_FAILURE;
-        }
-    }
-
-    const bool is_server = server_ip == NULL;
-
-    if (iters == 0 || (!is_server && interval == 0))
-    {
-        usage (stderr, argv[0]);
+        nobypass_print_usage (argv[0]);
         return EXIT_FAILURE;
     }
 
-    if (is_server)
-        start_server (iters);
-    else
-    {
-        persistence_agent = persistence_init ("no-bypass.dat", persistence_flag);
-        if (!persistence_agent)
-        {
-            LOG (stderr, "Failed to initialize persistence agent\n");
-            return EXIT_FAILURE;
-        }
+    LOG (stdout, "Starting server with iters=%u\n", iters);
 
-        start_client (iters, interval, server_ip);
+    start_server (iters);
+#else
+    int persistence_flag = PERSISTENCE_M_ALL_TIMESTAMPS;
+
+    uint32_t iters = 0;
+    uint64_t interval = 0;
+    char *server_ip = NULL;
+    if (!nobypass_parse_args (argc, argv, &iters, &interval, &server_ip))
+    {
+        nobypass_print_usage (argv[0]);
+        return EXIT_FAILURE;
     }
+
+    persistence_agent = persistence_init ("no-bypass.dat", persistence_flag);
+    if (!persistence_agent)
+    {
+        LOG (stderr, "Failed to initialize persistence agent\n");
+        return EXIT_FAILURE;
+    }
+
+    LOG (stdout, "Starting client with iters=%u, interval=%lu, server_ip=%s\n", iters, interval, server_ip);
+
+    start_client (iters, interval, server_ip);
+#endif
 
     return EXIT_SUCCESS;
 }

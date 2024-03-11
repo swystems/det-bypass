@@ -2,11 +2,6 @@ cmake_minimum_required(VERSION 3.10)
 
 project("rdma")
 
-if (NOT DEBUG)
-    set(DEBUG 0)
-endif ()
-add_definitions(-DDEBUG=${DEBUG})
-
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -g -Wall -Werror -Wextra -Wpedantic")
 
 link_libraries(ibverbs)

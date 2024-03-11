@@ -1,6 +1,7 @@
 #include "../common/common.h"
 #include "../common/net.h"
 #include "../common/persistence.h"
+#include "src/args.h"
 #include "src/xdp-loading.h"
 
 #include <stdbool.h>
@@ -8,24 +9,13 @@
 
 #define DUMP_MAP 0
 
-void usage (char *prog)
-{
-    // <prog> <ifname> <action>
-    fprintf (stderr, "Usage: %s <ifname> <action> [extra arguments]\n", prog);
-    fprintf (stderr, "Actions:\n");
-    fprintf (stderr, "\t- start: start the pingpong experiment\n");
-    fprintf (stderr, "\t         on the server: %s <ifname> start <# of packets>\n", prog);
-    fprintf (stderr, "\t         on the client: %s <ifname> start <# of packets> <packets interval (ns)> <server IP>\n", prog);
-    fprintf (stderr, "\t- remove: remove XDP program\n");
-}
-
 // Information about the XDP program
 static const char *filename = "pingpong.o";
 static const char *prog_name = "xdp_main";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong";
 static const char *mapname = "last_payload";
 
-static const char *outfile = "pingpong.dat";
+__attribute_maybe_unused__ static const char *outfile = "pingpong.dat";
 
 static persistence_agent_t *persistence;
 
@@ -153,29 +143,15 @@ int send_packet (char *buf, const int packet_id, struct sockaddr_ll *sock_addr, 
  * @param iters the number of packets to send
  * @param interval only for the client, the interval between packets
  */
-void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, const uint32_t interval)
+void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, __attribute_maybe_unused__ const uint32_t interval)
 {
-    bool is_server = server_ip == NULL;// if no server_ip is provided, I must be the server
-
-    if (!is_server)
-    {
-        LOG (stdout, "Initializing persistence module... ");
-        persistence = persistence_init (outfile, 0);
-        if (!persistence)
-        {
-            fprintf (stderr, "ERR: persistence_init failed\n");
-            return;
-        }
-        LOG (stdout, "OK\n");
-    }
-
     uint8_t src_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint8_t dest_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint32_t src_ip = 0;
     uint32_t dest_ip = 0;
     LOG (stdout, "Exchanging addresses... ");
-    int ret = exchange_eth_ip_addresses (ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
-    if (ret < 0)
+    int ret = exchange_eth_ip_addresses (ifindex, server_ip, __SERVER__, src_mac, dest_mac, &src_ip, &dest_ip);
+    if (UNLIKELY (ret < 0))
     {
         fprintf (stderr, "ERR: exchange_eth_ip_addresses failed\n");
         return;
@@ -207,12 +183,11 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
 
     struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
 
-    if (!is_server)
-    {
-        LOG (stdout, "Starting sender thread... ");
-        start_sending_packets (iters, interval, buf, &sock_addr, send_packet, NULL);
-        LOG (stdout, "OK\n");
-    }
+#if !__SERVER__
+    LOG (stdout, "Starting sender thread... ");
+    start_sending_packets (iters, interval, buf, &sock_addr, send_packet, NULL);
+    LOG (stdout, "OK\n");
+#endif
 
     // if client, send packet (phase 0), receive it back (phase 1), send it back (phase 2) and wait to receive it back again (phase 3)
     // then start again.
@@ -234,67 +209,65 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, c
     }
 #endif
     struct pingpong_payload *buf_payload = packet_payload (buf);
-    if (is_server)
+
+#if __SERVER__
+    while (current_id < iters)
     {
-        while (current_id < iters)
+        next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
+
+        if (UNLIKELY (buf_payload->phase != 0))
         {
-            next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
+            fprintf (stderr, "ERR: expected phase 0, got %d\n", buf_payload->phase);
+            return;
+        }
 
-            if (UNLIKELY (buf_payload->phase != 0))
-            {
-                fprintf (stderr, "ERR: expected phase 0, got %d\n", buf_payload->phase);
-                return;
-            }
-
-            buf_payload->ts[1] = get_time_ns ();
+        buf_payload->ts[1] = get_time_ns ();
 
 #if DEBUG
-            if (buf_payload->id - current_id != 1)
-                LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
+        if (buf_payload->id - current_id != 1)
+            LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
 #endif
 
-            current_id = max (current_id, buf_payload->id);
+        current_id = max (current_id, buf_payload->id);
 
-            buf_payload->phase = 2;
+        buf_payload->phase = 2;
 
-            buf_payload->ts[2] = get_time_ns ();
+        buf_payload->ts[2] = get_time_ns ();
 
-            int ret = send_pingpong_packet (sock, buf, &sock_addr);
+        int ret = send_pingpong_packet (sock, buf, &sock_addr);
 
-            if (UNLIKELY (ret < 0))
-            {
-                perror ("sendto");
-                return;
-            }
-
-            if (UNLIKELY (current_id >= iters))
-                break;
-        }
-    }
-    else
-    {
-        while (current_id < iters)
+        if (UNLIKELY (ret < 0))
         {
-            next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
+            perror ("sendto");
+            return;
+        }
 
-            if (buf_payload->phase != 2)
-            {
-                fprintf (stderr, "ERR: expected phase 2, got %d\n", buf_payload->phase);
-                return;
-            }
+        if (UNLIKELY (current_id >= iters))
+            break;
+    }
+#else
+    while (current_id < iters)
+    {
+        next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
+
+        if (buf_payload->phase != 2)
+        {
+            fprintf (stderr, "ERR: expected phase 2, got %d\n", buf_payload->phase);
+            return;
+        }
 
 #if DEBUG
-            if (buf_payload->id - current_id != 1)
-                LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
+        if (buf_payload->id - current_id != 1)
+            LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
 #endif
 
-            buf_payload->ts[3] = get_time_ns ();
+        buf_payload->ts[3] = get_time_ns ();
 
-            persistence->write (persistence, buf_payload);
+        persistence->write (persistence, buf_payload);
 
-            current_id = max (current_id, buf_payload->id);
-        }
+        current_id = max (current_id, buf_payload->id);
     }
+#endif
 
     printf ("Pingpong experiment finished\n");
 
@@ -347,17 +320,32 @@ int detach_pingpong_xdp (int ifindex)
 
 int main (int argc, char **argv)
 {
-#if DEBUG
-    printf ("DEBUG mode\n");
-#endif
-    if (argc < 3)
+    char *ifname = argv[1];
+    bool remove;
+    uint32_t iters = 0;
+    uint64_t interval = 0;
+    char *server_ip = NULL;
+
+#if __SERVER__
+    if (!xdp_parse_args (argc, argv, &ifname, &remove, &iters))
     {
-        usage (argv[0]);
+        xdp_print_usage (argv[0]);
+        return EXIT_FAILURE;
+    }
+#else
+    if (!xdp_parse_args (argc, argv, &ifname, &remove, &iters, &interval, &server_ip))
+    {
+        xdp_print_usage (argv[0]);
         return EXIT_FAILURE;
     }
 
-    char *ifname = argv[1];
-    char *action = argv[2];
+    persistence = persistence_init (outfile, PERSISTENCE_M_ALL_TIMESTAMPS);
+    if (!persistence)
+    {
+        fprintf (stderr, "ERR: persistence_init failed\n");
+        return EXIT_FAILURE;
+    }
+#endif
 
     int ifindex = if_nametoindex (ifname);
     if (!ifindex)
@@ -366,38 +354,7 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    if (strcmp (action, "start") == 0)
-    {
-        detach_pingpong_xdp (ifindex);// always try to detach first
-
-        if (argc != 4 && argc != 6)// argc=4 is server (./prog ifname start iters) argc=6 is client (./prog ifname start iters interval ip)
-        {
-            usage (argv[0]);
-            return EXIT_FAILURE;
-        }
-
-        // attach the pingpong XDP program
-        int ret = attach_pingpong_xdp (ifindex);
-        if (ret)
-        {
-            fprintf (stderr, "ERR: attaching program failed\n");
-            return EXIT_FAILURE;
-        }
-
-        const int iters = atoi (argv[3]);
-        if (argc == 4)
-        {
-            start_pingpong (ifindex, NULL, iters, 0);
-        }
-        else
-        {
-            uint32_t interval = atoi (argv[4]);
-            char *ip = argv[5];
-
-            start_pingpong (ifindex, ip, iters, interval);
-        }
-    }
-    else if (strcmp (action, "remove") == 0)
+    if (remove)
     {
         int ret = detach_pingpong_xdp (ifindex);
         if (ret)
@@ -406,12 +363,19 @@ int main (int argc, char **argv)
             return EXIT_FAILURE;
         }
         printf ("XDP program detached\n");
+        return EXIT_SUCCESS;
     }
-    else
+
+    detach_pingpong_xdp (ifindex);// always try to detach first
+
+    // attach the pingpong XDP program
+    int ret = attach_pingpong_xdp (ifindex);
+    if (ret)
     {
-        usage (argv[0]);
+        fprintf (stderr, "ERR: attaching program failed\n");
         return EXIT_FAILURE;
     }
 
+    start_pingpong (ifindex, server_ip, iters, interval);
     return EXIT_SUCCESS;
 }

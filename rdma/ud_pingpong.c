@@ -13,6 +13,7 @@
 #include "../common/net.h"
 #include "../common/persistence.h"
 //#include "ccan/minmax.h"
+#include "src/args.h"
 #include "src/ib_net.h"
 #include "src/pingpong.h"
 
@@ -37,15 +38,6 @@ enum {
     PINGPONG_SEND_WRID = 0,
     PINGPONG_RECV_WRID = QUEUE_SIZE,
 };
-
-void usage (char *prog)
-{
-    fprintf (stderr, "Usage: %s <ib-device> <port-gid-idx> <action> [extra arguments]\n", prog);
-    fprintf (stderr, "Actions:\n");
-    fprintf (stderr, "\t- start: start the pingpong experiment\n");
-    fprintf (stderr, "\t         on the server: %s <ib-device> <port-gid-idx> start <# of packets>\n", prog);
-    fprintf (stderr, "\t         on the client: %s <ib-device> <port-gid-idx> start <# of packets> <packets interval (ns)> <server IP>\n", prog);
-}
 
 static int page_size;
 
@@ -332,9 +324,9 @@ int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey,
     return ibv_post_send (ctx->qp, &wr, &bad_wr);
 }
 
-int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool is_server)
+int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc)
 {
-    const uint64_t ts = get_time_ns ();
+    __attribute_maybe_unused__ const uint64_t ts = get_time_ns ();
     if (wc.status != IBV_WC_SUCCESS)
     {
         LOG (stderr, "Failed status %s (%d) for wr_id %d\n", ibv_wc_status_str (wc.status), wc.status, (int) wc.wr_id);
@@ -356,42 +348,41 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc, const bool 
 
         // Only the server needs to wait for the completion of a send operation in order to post the receive.
         // Since the client reads the content immediately and only once, the recv is posted immediatly because overwriting the buffer is not a problem.
-        if (is_server && UNLIKELY (pp_post_recv (ctx, wc.wr_id - PINGPONG_SEND_WRID)))
+#if __SERVER__
+        if (UNLIKELY (pp_post_recv (ctx, wc.wr_id - PINGPONG_SEND_WRID)))
         {
             LOG (stderr, "Couldn't post receive on queue_idx %lu\n", wc.wr_id - PINGPONG_SEND_WRID);
             return 1;
         }
+#endif
         return 0;
     }
 
     // Recv WRID
     uint32_t queue_idx = wc.wr_id - PINGPONG_RECV_WRID;
     // LOG (stdout, "Received packet on queue_idx %d\n", queue_idx);
-    if (is_server)
+#if __SERVER__
+    // Make sure the send buffer is not being used by an outgoing packet.
+    BUSY_WAIT (BITSET_TEST (ctx->pending_send, queue_idx));
+    ctx->recv_payloads[queue_idx]->ts[1] = ts;
+    ctx->recv_payloads[queue_idx]->ts[2] = get_time_ns ();
+    LOG (stdout, "Sending back packet %d from queue %d\n", ctx->recv_payloads[queue_idx]->id, queue_idx);
+    if (pp_post_send (ctx, (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE, ctx->recv_mr->lkey, queue_idx))
     {
-        // Make sure the send buffer is not being used by an outgoing packet.
-        BUSY_WAIT (BITSET_TEST (ctx->pending_send, queue_idx));
-        ctx->recv_payloads[queue_idx]->ts[1] = ts;
-        ctx->recv_payloads[queue_idx]->ts[2] = get_time_ns ();
-        LOG (stdout, "Sending back packet %d from queue %d\n", ctx->recv_payloads[queue_idx]->id, queue_idx);
-        if (pp_post_send (ctx, (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE, ctx->recv_mr->lkey, queue_idx))
-        {
-            LOG (stderr, "Couldn't post send\n");
-            return 1;
-        }
+        LOG (stderr, "Couldn't post send\n");
+        return 1;
     }
-    else
-    {
-        ctx->recv_payloads[queue_idx]->ts[3] = get_time_ns ();
-        persistence_agent->write (persistence_agent, ctx->recv_payloads[queue_idx]);
+#else
+    ctx->recv_payloads[queue_idx]->ts[3] = get_time_ns ();
+    persistence_agent->write (persistence_agent, ctx->recv_payloads[queue_idx]);
 
-        // The client can post the receive for the used queue index immediately, since the packet is not used anymore.
-        if (UNLIKELY (pp_post_recv (ctx, queue_idx)))
-        {
-            LOG (stderr, "Couldn't post receive on queue_idx %d\n", queue_idx);
-            return 1;
-        }
+    // The client can post the receive for the used queue index immediately, since the packet is not used anymore.
+    if (UNLIKELY (pp_post_recv (ctx, queue_idx)))
+    {
+        LOG (stderr, "Couldn't post receive on queue_idx %d\n", queue_idx);
+        return 1;
     }
+#endif
 
     return 0;
 }
@@ -454,39 +445,25 @@ int pp_send_single_packet (char *buf __unused, const int packet_id, struct socka
 
 int main (int argc, char **argv)
 {
-    if (argc < 5)
-    {
-        usage (argv[0]);
-        return 1;
-    }
+    char *ib_devname = NULL;
+    int port_gid_idx = 0;
+    uint32_t iters = 0;
 
-    char *ib_devname = argv[1];
-    int port_gid_idx = strtol (argv[2], NULL, 0);
-    char *action = argv[3];
-
-    if (strncmp (action, "start", 5) != 0)
-    {
-        usage (argv[0]);
-        return 1;
-    }
-
-    uint32_t iters = strtol (argv[4], NULL, 0);
-
-    bool is_server = true;
-    uint64_t interval = 0;
     char *server_ip = NULL;
-
-    if (argc > 5)
+#if __SERVER__
+    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters))
     {
-        is_server = false;
-        interval = strtol (argv[5], NULL, 0);
-        server_ip = argv[6];
+        ib_print_usage (argv[0]);
+        return 1;
     }
-
-    if (!is_server)
-        persistence_agent = persistence_init ("ud.dat", PERSISTENCE_M_ALL_TIMESTAMPS);
-
-    LOG (stdout, "Server IP: %s\n", server_ip);
+#else
+    uint64_t interval = 0;
+    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters, &interval, &server_ip))
+    {
+        ib_print_usage (argv[0]);
+        return 1;
+    }
+#endif
 
     srand48 (getpid () * time (NULL));
 
@@ -515,7 +492,7 @@ int main (int argc, char **argv)
     }
     ib_print_node_info (&local_info);
 
-    if (exchange_data (server_ip, is_server, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &ctx->remote_info))
+    if (exchange_data (server_ip, __SERVER__, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &ctx->remote_info))
     {
         fprintf (stderr, "Couldn't exchange data\n");
         pp_close_context (ctx);
@@ -542,10 +519,9 @@ int main (int argc, char **argv)
         }
     }
 
-    if (!is_server)
-    {
-        start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
-    }
+#if !__SERVER__
+    start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
+#endif
 
     uint32_t recv_idx = 0;
     while (LIKELY (recv_idx < iters))
@@ -565,7 +541,7 @@ int main (int argc, char **argv)
 
         for (int i = 0; i < ne; ++i)
         {
-            if (UNLIKELY (parse_single_wc (ctx, wc[i], is_server)))
+            if (UNLIKELY (parse_single_wc (ctx, wc[i])))
             {
                 fprintf (stderr, "Couldn't parse WC\n");
                 return 1;
