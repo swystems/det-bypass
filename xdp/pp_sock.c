@@ -318,7 +318,7 @@ static int xsk_send_packet (struct xsk_socket_info *socket, uint64_t addr, uint3
     uint32_t tx_idx = 0;
 
     ret = xsk_ring_prod__reserve (&socket->tx, 1, &tx_idx);
-    if (ret != 1)
+    if (UNLIKELY (ret != 1))
     {
         /* No more transmit slots, drop the packet */
 #if !SERVER
@@ -425,21 +425,20 @@ static bool process_packet (struct xsk_socket_info *xsk,
  */
 static void handle_receive_packets (struct xsk_socket_info *xsk)
 {
-#if !SERVER
-    pthread_spin_lock (&xsk->xsk_client_lock);
-#endif
     //START_TIMER ();
     unsigned int rcvd, stock_frames, i;
     uint32_t idx_rx = 0, idx_fq = 0;
 
     rcvd = xsk_ring_cons__peek (&xsk->rx, RX_BATCH_SIZE, &idx_rx);
+
     if (!rcvd)
     {
-#if !SERVER
-        pthread_spin_unlock (&xsk->xsk_client_lock);
-#endif
         return;
     }
+
+#if !SERVER
+    pthread_spin_lock (&xsk->xsk_client_lock);
+#endif
 
     /*
      * Not sure about this instruction and the if block.
