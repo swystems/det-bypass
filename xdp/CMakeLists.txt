@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 
-project("xdp")
+project(xdp)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/../config.cmake)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
@@ -20,5 +22,5 @@ file(GLOB SOURCES src/*.c ../common/*.c)
 add_executable(pp_poll ${SOURCES} pp_poll.c)
 add_dependencies(pp_poll pingpong)
 
-add_executable (pp_sock ${SOURCES} pp_sock.c)
+add_executable(pp_sock ${SOURCES} pp_sock.c)
 add_dependencies(pp_sock pingpong_xsk)
