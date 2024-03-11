@@ -147,12 +147,12 @@ int main (int argc, char **argv)
 
     start_server (iters);
 #else
-    int persistence_flag = PERSISTENCE_M_ALL_TIMESTAMPS;
+    uint32_t persistence_flag = PERSISTENCE_M_ALL_TIMESTAMPS;
 
     uint32_t iters = 0;
     uint64_t interval = 0;
     char *server_ip = NULL;
-    if (!nobypass_parse_args (argc, argv, &iters, &interval, &server_ip))
+    if (!nobypass_parse_args (argc, argv, &iters, &interval, &server_ip, &persistence_flag))
     {
         nobypass_print_usage (argv[0]);
         return EXIT_FAILURE;

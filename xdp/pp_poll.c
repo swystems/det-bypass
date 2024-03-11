@@ -333,13 +333,15 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 #else
-    if (!xdp_parse_args (argc, argv, &ifname, &remove, &iters, &interval, &server_ip))
+    uint32_t persistence_flags = PERSISTENCE_M_ALL_TIMESTAMPS;
+
+    if (!xdp_parse_args (argc, argv, &ifname, &remove, &iters, &interval, &server_ip, &persistence_flags))
     {
         xdp_print_usage (argv[0]);
         return EXIT_FAILURE;
     }
 
-    persistence = persistence_init (outfile, PERSISTENCE_M_ALL_TIMESTAMPS);
+    persistence = persistence_init (outfile, persistence_flags);
     if (!persistence)
     {
         fprintf (stderr, "ERR: persistence_init failed\n");

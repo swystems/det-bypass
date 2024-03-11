@@ -458,9 +458,17 @@ int main (int argc, char **argv)
     }
 #else
     uint64_t interval = 0;
-    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters, &interval, &server_ip))
+    uint32_t persistence_flags = 0;
+    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters, &interval, &server_ip, &persistence_flags))
     {
         ib_print_usage (argv[0]);
+        return 1;
+    }
+
+    persistence_agent = persistence_init ("ud.dat", persistence_flags);
+    if (!persistence_agent)
+    {
+        LOG (stderr, "Failed to initialize persistence agent\n");
         return 1;
     }
 #endif

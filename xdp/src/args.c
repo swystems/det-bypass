@@ -11,12 +11,13 @@ void xdp_print_usage (char *prog)
 #else
 void xdp_print_usage (char *prog)
 {
-    printf ("Usage: %s -d <ifname> [--remove] [-p <packets> -i <interval> -s <server_ip>]\n", prog);
+    printf ("Usage: %s -d <ifname> [--remove] [-p <packets> -i <interval> -s <server_ip>] [-m <measurement>]\n", prog);
     printf ("\t-r, --remove\tRemove XDP program. Only `ifname` is required.\n");
     printf ("\t-d, --dev <ifname>\tInterface to attach XDP program to.\n");
     printf ("\t-p, --packets <packets>\tNumber of packets to process in the experiment.\n");
     printf ("\t-i, --interval <interval>\tInterval between each packet in nanoseconds.\n");
     printf ("\t-s, --server <server_ip>\tServer IP address.\n");
+    printf ("\t-m, --measurement <measurement>\tMeasurement to perform. 0: All Timestamps, 1: Min/Max latency, 2: Buckets.\n");
 }
 #endif
 
@@ -68,10 +69,11 @@ static struct option long_options[] = {
     {"packets", required_argument, 0, 'p'},
     {"interval", required_argument, 0, 'i'},
     {"server", required_argument, 0, 's'},
+    {"measurement", required_argument, 0, 'm'},
     {"help", no_argument, 0, 'h'},
     {0, 0, 0, 0}};
 
-bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_t *iters, uint64_t *interval, char **server_ip)
+bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags)
 {
     int opt;
     *iters = 0;
@@ -99,6 +101,9 @@ bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_
             break;
         case 'h':
             return false;
+        case 'm':
+            *pers_flags = pers_measurement_to_flag (atoi (optarg));
+            break;
         default:
             return false;
         }

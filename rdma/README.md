@@ -54,11 +54,12 @@ our use case:
 
 ## Build
 
-The build process follows the same steps as for any CMake project:
+The build process follows the same steps as for any CMake project, with a variable IS_SERVER to indicate if the program
+is the server or the client.
 
 ```bash
 cd build
-cmake ..
+cmake -D __SERVER__=<0/1> ..
 make
 ```
 
@@ -66,7 +67,7 @@ There is the option to build the programs using a `DEBUG` mode, which has extra 
 
 ```bash
 cd build
-cmake -D DEBUG=1 ..
+cmake -D DEBUG=1 -D __SERVER__=<0/1> ..
 make
 ```
 
@@ -77,17 +78,19 @@ The programs require at least two nodes to run, one acting as the server and the
 The following example shows how to run the `ud_pingpong` experiment.
 
 First, the server must be started, which will wait a connection from a client:
+
 ```bash
-./ud_pingpong <ib device name> <port gid index> start <pingpong rounds>
+./ud_pingpong -d <ib device name> -g <port gid index> -p <pingpong rounds>
 # Example:
-# ./ud_pingpong rocep65s0f0 0 start 1000
+# ./ud_pingpong -d rocep65s0f0 -g 0 -p 1000
 ```
 
 Then, the client must be started, which will connect to the server and start the pingpong:
+
 ```bash
-./ud_pingpong <ib device name> <port gid index> start <pingpong rounds> <send interval> <server IP>
+./ud_pingpong -d <ib device name> -g <port gid index> -p <pingpong rounds> -i <send interval> -s <server IP>
 # Example:
-# ./ud_pingpong rocep65s0f0 0 start 1000 1000000 10.10.1.2
+# ./ud_pingpong -d rocep65s0f0 -g 0 -p 1000 -i 1000000 -s 10.10.1.2
 ```
 
 Note that the CLI interface was adapted to the other programs in the project and is different from the one in the
@@ -95,5 +98,7 @@ Note that the CLI interface was adapted to the other programs in the project and
 
 ## Results
 
-By default, the results of the experiments are saved in a file named after the transport type (e.g. `ud_pingpong` creates a file `ud.dat`).
-In the code, the "persistence agent" can be modified to print results to stdout, to a different file, or to store different information about the results.
+By default, the results of the experiments are saved in a file named after the transport type (e.g. `ud_pingpong`
+creates a file `ud.dat`).
+In the code, the "persistence agent" can be modified to print results to stdout, to a different file, or to store
+different information about the results.

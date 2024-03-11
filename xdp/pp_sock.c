@@ -568,7 +568,9 @@ int main (int argc __unused, char **argv __unused)
         return EXIT_FAILURE;
     }
 #else
-    if (!xdp_parse_args (argc, argv, &cfg.ifname, &remove, &cfg.iters, &cfg.interval, &server_ip))
+    uint32_t persistence_flags = PERSISTENCE_M_ALL_TIMESTAMPS;
+
+    if (!xdp_parse_args (argc, argv, &cfg.ifname, &remove, &cfg.iters, &cfg.interval, &server_ip, &persistence_flags))
     {
         xdp_print_usage (argv[0]);
         return EXIT_FAILURE;
@@ -668,7 +670,7 @@ int main (int argc __unused, char **argv __unused)
     fflush (stdout);
 
 #if !__SERVER__
-        persistence_agent = persistence_init (outfile, PERSISTENCE_M_MIN_MAX_LATENCY);
+        persistence_agent = persistence_init (outfile, persistence_flags);
         initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
 #endif
 

@@ -421,7 +421,6 @@ int main (int argc, char **argv)
     char *ib_devname = NULL;
     int port_gid_idx = 0;
     uint32_t iters = 0;
-    uint64_t interval = 0;
     char *server_ip = NULL;
 
 #if __SERVER__
@@ -431,12 +430,14 @@ int main (int argc, char **argv)
         return 1;
     }
 #else
-    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters, &interval, &server_ip))
+    uint64_t interval = 0;
+    uint32_t persistence_flags = PERSISTENCE_M_ALL_TIMESTAMPS;
+    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters, &interval, &server_ip, &persistence_flags))
     {
         ib_print_usage (argv[0]);
         return 1;
     }
-    persistence = persistence_init ("rc_pingpong.dat", PERSISTENCE_M_ALL_TIMESTAMPS);
+    persistence = persistence_init ("rc.dat", persistence_flags);
     if (!persistence)
     {
         fprintf (stderr, "Couldn't initialize persistence agent\n");

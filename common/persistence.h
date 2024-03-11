@@ -9,8 +9,8 @@
 #include <sys/queue.h>
 
 enum persistence_output_flags {
-    PERSISTENCE_F_FILE = 1 << 0,
-    PERSISTENCE_F_STDOUT = 1 << 1,
+    PERSISTENCE_F_FILE = 1U << 0,
+    PERSISTENCE_F_STDOUT = 1U << 1,
 };
 
 /**
@@ -18,11 +18,11 @@ enum persistence_output_flags {
  */
 enum persistence_measurement_flags {
     // Store all rounds timestamps. Default option.
-    PERSISTENCE_M_ALL_TIMESTAMPS = 1 << 2,
+    PERSISTENCE_M_ALL_TIMESTAMPS = 1U << 2,
     // Store rounds with minimum and maximum latency
-    PERSISTENCE_M_MIN_MAX_LATENCY = 1 << 3,
+    PERSISTENCE_M_MIN_MAX_LATENCY = 1U << 3,
     // TODO: Store rounds in buckets
-    PERSISTENCE_M_BUCKETS = 1 << 4,
+    PERSISTENCE_M_BUCKETS = 1U << 4,
 };
 
 /**
@@ -83,7 +83,7 @@ typedef struct persistence_agent {
     /**
      * Flags passed to the initialization function.
      */
-    int flags;
+    uint32_t flags;
 
     /**
      * Write data to the persistence agent.
@@ -112,4 +112,4 @@ typedef struct persistence_agent {
  * @param filename the name of the file to store data
  * @return 0 on success, -1 on error
  */
-persistence_agent_t *persistence_init (const char *filename, uint8_t flags);
+persistence_agent_t *persistence_init (const char *filename, uint32_t flags);
