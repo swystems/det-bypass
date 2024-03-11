@@ -135,7 +135,7 @@ void start_client (uint32_t iters, uint64_t interval, const char *server_ip)
 
 int main (int argc, char **argv)
 {
-#if __SERVER__
+#if SERVER
     uint32_t iters = 0;
     if (!nobypass_parse_args (argc, argv, &iters))
     {

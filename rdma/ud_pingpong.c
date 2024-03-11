@@ -348,7 +348,7 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc)
 
         // Only the server needs to wait for the completion of a send operation in order to post the receive.
         // Since the client reads the content immediately and only once, the recv is posted immediatly because overwriting the buffer is not a problem.
-#if __SERVER__
+#if SERVER
         if (UNLIKELY (pp_post_recv (ctx, wc.wr_id - PINGPONG_SEND_WRID)))
         {
             LOG (stderr, "Couldn't post receive on queue_idx %lu\n", wc.wr_id - PINGPONG_SEND_WRID);
@@ -361,7 +361,7 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc)
     // Recv WRID
     uint32_t queue_idx = wc.wr_id - PINGPONG_RECV_WRID;
     // LOG (stdout, "Received packet on queue_idx %d\n", queue_idx);
-#if __SERVER__
+#if SERVER
     // Make sure the send buffer is not being used by an outgoing packet.
     BUSY_WAIT (BITSET_TEST (ctx->pending_send, queue_idx));
     ctx->recv_payloads[queue_idx]->ts[1] = ts;
@@ -450,7 +450,7 @@ int main (int argc, char **argv)
     uint32_t iters = 0;
 
     char *server_ip = NULL;
-#if __SERVER__
+#if SERVER
     if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters))
     {
         ib_print_usage (argv[0]);
@@ -500,7 +500,7 @@ int main (int argc, char **argv)
     }
     ib_print_node_info (&local_info);
 
-    if (exchange_data (server_ip, __SERVER__, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &ctx->remote_info))
+    if (exchange_data (server_ip, SERVER, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &ctx->remote_info))
     {
         fprintf (stderr, "Couldn't exchange data\n");
         pp_close_context (ctx);
@@ -527,7 +527,7 @@ int main (int argc, char **argv)
         }
     }
 
-#if !__SERVER__
+#if !SERVER
     start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
 #endif
 

@@ -11,7 +11,7 @@
 
 void nobypass_print_usage (char *prog);
 
-#if __SERVER__
+#if SERVER
 bool nobypass_parse_args (int argc, char **argv, uint32_t *iters);
 #else
 bool nobypass_parse_args (int argc, char **argv, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags);

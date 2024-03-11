@@ -54,12 +54,12 @@ our use case:
 
 ## Build
 
-The build process follows the same steps as for any CMake project, with a variable IS_SERVER to indicate if the program
+The build process follows the same steps as for any CMake project, with a variable SERVER to indicate if the program
 is the server or the client.
 
 ```bash
 cd build
-cmake -D __SERVER__=<0/1> ..
+cmake -D SERVER=<0,1> ..
 make
 ```
 
@@ -67,7 +67,7 @@ There is the option to build the programs using a `DEBUG` mode, which has extra 
 
 ```bash
 cd build
-cmake -D DEBUG=1 -D __SERVER__=<0/1> ..
+cmake -D DEBUG=1 -D SERVER=<0,1> ..
 make
 ```
 

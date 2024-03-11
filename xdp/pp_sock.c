@@ -370,7 +370,7 @@ static bool process_packet (struct xsk_socket_info *xsk,
     if (payload->id >= cfg.iters)
         global_exit = true;
 
-#if __SERVER__
+#if SERVER
     struct iphdr *ip = (struct iphdr *) (eth + 1);
     uint8_t tmp_mac[ETH_ALEN];
     uint32_t tmp_ip;
@@ -561,7 +561,7 @@ int main (int argc __unused, char **argv __unused)
     char *server_ip = NULL;
     cfg.interval = 0;
 
-#if __SERVER__
+#if SERVER
     if (!xdp_parse_args (argc, argv, &cfg.ifname, &remove, &cfg.iters))
     {
         xdp_print_usage (argv[0]);
@@ -596,7 +596,7 @@ int main (int argc __unused, char **argv __unused)
     uint32_t src_ip;
     uint8_t dest_mac[ETH_ALEN];
     uint32_t dest_ip;
-    exchange_eth_ip_addresses (cfg.ifindex, server_ip, __SERVER__, src_mac, dest_mac, &src_ip, &dest_ip);
+    exchange_eth_ip_addresses (cfg.ifindex, server_ip, SERVER, src_mac, dest_mac, &src_ip, &dest_ip);
 
     struct bpf_object *obj = read_xdp_file (filename);
     if (obj == NULL)
@@ -669,7 +669,7 @@ int main (int argc __unused, char **argv __unused)
     fprintf (stdout, "Starting experiment\n");
     fflush (stdout);
 
-#if !__SERVER__
+#if !SERVER
         persistence_agent = persistence_init (outfile, persistence_flags);
         initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
 #endif

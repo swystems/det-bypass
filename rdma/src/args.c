@@ -1,6 +1,6 @@
 #include "args.h"
 
-#if __SERVER__
+#if SERVER
 void ib_print_usage (char *prog)
 {
     printf ("==== Server Program ====\n");
@@ -25,7 +25,7 @@ void ib_print_usage (char *prog)
 }
 #endif
 
-#if __SERVER__
+#if SERVER
 static struct option long_options[] = {
     {"dev", required_argument, 0, 'd'},
     {"gidx", required_argument, 0, 'g'},

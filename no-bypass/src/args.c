@@ -1,6 +1,6 @@
 #include "args.h"
 
-#if __SERVER__
+#if SERVER
 void nobypass_print_usage (char *prog)
 {
     printf ("==== Server Program ====\n");
@@ -21,7 +21,7 @@ void nobypass_print_usage (char *prog)
 }
 #endif
 
-#if __SERVER__
+#if SERVER
 static struct option long_options[] = {
     {"packets", required_argument, 0, 'p'},
     {"help", no_argument, 0, 'h'},

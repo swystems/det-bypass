@@ -150,7 +150,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, _
     uint32_t src_ip = 0;
     uint32_t dest_ip = 0;
     LOG (stdout, "Exchanging addresses... ");
-    int ret = exchange_eth_ip_addresses (ifindex, server_ip, __SERVER__, src_mac, dest_mac, &src_ip, &dest_ip);
+    int ret = exchange_eth_ip_addresses (ifindex, server_ip, SERVER, src_mac, dest_mac, &src_ip, &dest_ip);
     if (UNLIKELY (ret < 0))
     {
         fprintf (stderr, "ERR: exchange_eth_ip_addresses failed\n");
@@ -183,7 +183,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, _
 
     struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
 
-#if !__SERVER__
+#if !SERVER
     LOG (stdout, "Starting sender thread... ");
     start_sending_packets (iters, interval, buf, &sock_addr, send_packet, NULL);
     LOG (stdout, "OK\n");
@@ -210,7 +210,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, _
 #endif
     struct pingpong_payload *buf_payload = packet_payload (buf);
 
-#if __SERVER__
+#if SERVER
     while (current_id < iters)
     {
         next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
@@ -326,7 +326,7 @@ int main (int argc, char **argv)
     uint64_t interval = 0;
     char *server_ip = NULL;
 
-#if __SERVER__
+#if SERVER
     if (!xdp_parse_args (argc, argv, &ifname, &remove, &iters))
     {
         xdp_print_usage (argv[0]);

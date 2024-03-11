@@ -386,7 +386,7 @@ int parse_single_wc (struct pingpong_context *ctx)
         break;
     case PINGPONG_RECV_WRID:
         LOG (stdout, "Received packet\n");
-#if __SERVER__
+#if SERVER
         memcpy (ctx->send_payload, ctx->recv_payload, sizeof (struct pingpong_payload));
         ctx->send_payload->ts[1] = ts;
         ctx->send_payload->ts[2] = get_time_ns ();
@@ -423,7 +423,7 @@ int main (int argc, char **argv)
     uint32_t iters = 0;
     char *server_ip = NULL;
 
-#if __SERVER__
+#if SERVER
     if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters))
     {
         ib_print_usage (argv[0]);
@@ -472,7 +472,7 @@ int main (int argc, char **argv)
     ib_print_node_info (&local_info);
 
     struct ib_node_info remote_info;
-    if (exchange_data (server_ip, __SERVER__, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &remote_info))
+    if (exchange_data (server_ip, SERVER, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &remote_info))
     {
         fprintf (stderr, "Couldn't exchange data\n");
         return 1;
@@ -487,7 +487,7 @@ int main (int argc, char **argv)
 
     uint8_t *send_buffer = NULL;
 
-#if !__SERVER__
+#if !SERVER
     start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
 #endif
 

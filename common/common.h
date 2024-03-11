@@ -19,10 +19,10 @@
 #endif
 
 /**
- * __SERVER__ is specified at compilation time by CMake.
+ * SERVER is specified at compilation time by CMake.
  */
-#ifndef __SERVER__
-#define __SERVER__ 0
+#ifndef SERVER
+#define SERVER 0
 #endif
 
 #if DEBUG
