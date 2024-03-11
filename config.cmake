@@ -1,5 +1,6 @@
-# create a variable SERVER; if given in the command-line, the given value will be used; otherwise False will be used
-option(SERVER "Compile for the server machine" False)
+if (NOT DEFINED SERVER)
+    message(FATAL_ERROR "SERVER variable must be defined.")
+endif ()
 add_definitions(-DSERVER=${SERVER})
 
 if (SERVER)
@@ -8,7 +9,9 @@ else ()
     message(STATUS "Compiling for the client machine")
 endif ()
 
-option(DEBUG "Compile with debug information" False)
+if (NOT DEFINED DEBUG)
+    set(DEBUG 0)
+endif ()
 add_definitions(-DDEBUG=${DEBUG})
 
 if (DEBUG)
