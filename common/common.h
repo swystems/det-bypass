@@ -18,6 +18,13 @@
 #define DEBUG 0
 #endif
 
+/**
+ * SERVER is specified at compilation time by CMake.
+ */
+#ifndef SERVER
+#define SERVER 0
+#endif
+
 #if DEBUG
 #define LOG(stream, fmt, ...)                 \
     do                                        \
@@ -80,7 +87,6 @@
 
 // Random magic number for pingpong packets
 #define PINGPONG_MAGIC 0x8badbeef
-
 
 struct pingpong_payload {
     __u32 id;

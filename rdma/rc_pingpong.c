@@ -12,6 +12,7 @@
 #include "../common/net.h"
 #include "../common/persistence.h"
 //#include "ccan/minmax.h"
+#include "src/args.h"
 #include "src/ib_net.h"
 #include "src/pingpong.h"
 
@@ -23,15 +24,6 @@
 
 // Priority (i.e. service level) for the traffic
 #define PRIORITY 0
-
-void usage (char *prog)
-{
-    fprintf (stderr, "Usage: %s <ib-device> <port-gid-idx> <action> [extra arguments]\n", prog);
-    fprintf (stderr, "Actions:\n");
-    fprintf (stderr, "\t- start: start the pingpong experiment\n");
-    fprintf (stderr, "\t         on the server: %s <ib-device> <port-gid-idx> start <# of packets>\n", prog);
-    fprintf (stderr, "\t         on the client: %s <ib-device> <port-gid-idx> start <# of packets> <packets interval (ns)> <server IP>\n", prog);
-}
 
 enum {
     PINGPONG_RECV_WRID = 1,// The receive work request ID
@@ -375,11 +367,11 @@ static int pp_post_recv (struct pingpong_context *ctx, int n)
     return i;
 }
 
-int parse_single_wc (struct pingpong_context *ctx, const bool is_server)
+int parse_single_wc (struct pingpong_context *ctx)
 {
     const enum ibv_wc_status status = ctx->cq->status;
     const uint64_t wr_id = ctx->cq->wr_id;
-    const uint64_t ts = ibv_wc_read_completion_ts (ctx->cq);
+    __attribute_maybe_unused__ const uint64_t ts = ibv_wc_read_completion_ts (ctx->cq);
 
     if (status != IBV_WC_SUCCESS)
     {
@@ -394,19 +386,16 @@ int parse_single_wc (struct pingpong_context *ctx, const bool is_server)
         break;
     case PINGPONG_RECV_WRID:
         LOG (stdout, "Received packet\n");
-        if (is_server)
-        {
-            memcpy (ctx->send_payload, ctx->recv_payload, sizeof (struct pingpong_payload));
-            ctx->send_payload->ts[1] = ts;
-            ctx->send_payload->ts[2] = get_time_ns ();
-            // In this case, using the ctx->buf is safe because the server has no send thread concurrently accessing it.
-            pp_post_send (ctx, NULL);
-        }
-        else
-        {
-            ctx->recv_payload->ts[3] = get_time_ns ();
-            persistence->write (persistence, ctx->recv_payload);
-        }
+#if SERVER
+        memcpy (ctx->send_payload, ctx->recv_payload, sizeof (struct pingpong_payload));
+        ctx->send_payload->ts[1] = ts;
+        ctx->send_payload->ts[2] = get_time_ns ();
+        // In this case, using the ctx->buf is safe because the server has no send thread concurrently accessing it.
+        pp_post_send (ctx, NULL);
+#else
+        ctx->recv_payload->ts[3] = get_time_ns ();
+        persistence->write (persistence, ctx->recv_payload);
+#endif
         if (--available_recv <= 1)
         {
             available_recv += pp_post_recv (ctx, RECEIVE_DEPTH - available_recv);
@@ -429,34 +418,32 @@ int parse_single_wc (struct pingpong_context *ctx, const bool is_server)
 
 int main (int argc, char **argv)
 {
-    if (argc < 5)
-    {
-        usage (argv[0]);
-        return 1;
-    }
-
-    char *ib_devname = argv[1];
-    int port_gid_idx = strtol (argv[2], NULL, 0);
-    char *action = argv[3];
-
-    if (strncmp (action, "start", 5) != 0)
-    {
-        usage (argv[0]);
-        return 1;
-    }
-
-    uint32_t iters = strtol (argv[4], NULL, 0);
-
-    bool is_server = true;
-    uint64_t interval = 0;
+    char *ib_devname = NULL;
+    int port_gid_idx = 0;
+    uint32_t iters = 0;
     char *server_ip = NULL;
 
-    if (argc > 5)
+#if SERVER
+    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters))
     {
-        is_server = false;
-        interval = strtol (argv[5], NULL, 0);
-        server_ip = argv[6];
+        ib_print_usage (argv[0]);
+        return 1;
     }
+#else
+    uint64_t interval = 0;
+    uint32_t persistence_flags = PERSISTENCE_M_ALL_TIMESTAMPS;
+    if (!ib_parse_args (argc, argv, &ib_devname, &port_gid_idx, &iters, &interval, &server_ip, &persistence_flags))
+    {
+        ib_print_usage (argv[0]);
+        return 1;
+    }
+    persistence = persistence_init ("rc.dat", persistence_flags);
+    if (!persistence)
+    {
+        fprintf (stderr, "Couldn't initialize persistence agent\n");
+        return 1;
+    }
+#endif
 
     srand48 (getpid () * time (NULL));
 
@@ -485,22 +472,12 @@ int main (int argc, char **argv)
     ib_print_node_info (&local_info);
 
     struct ib_node_info remote_info;
-    if (exchange_data (server_ip, is_server, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &remote_info))
+    if (exchange_data (server_ip, SERVER, sizeof (local_info), (uint8_t *) &local_info, (uint8_t *) &remote_info))
     {
         fprintf (stderr, "Couldn't exchange data\n");
         return 1;
     }
     ib_print_node_info (&remote_info);
-
-    if (!is_server)// only client needs to print
-    {
-        persistence = persistence_init ("rc_pingpong.dat", PERSISTENCE_F_STDOUT);
-        if (!persistence)
-        {
-            fprintf (stderr, "Couldn't initialize persistence agent\n");
-            return 1;
-        }
-    }
 
     pp_ib_connect (ctx, IB_PORT, local_info.psn, IB_MTU, PRIORITY, &remote_info, port_gid_idx);
 
@@ -509,11 +486,10 @@ int main (int argc, char **argv)
     available_recv = pp_post_recv (ctx, RECEIVE_DEPTH);
 
     uint8_t *send_buffer = NULL;
-    if (!is_server)
-    {
 
-        start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
-    }
+#if !SERVER
+    start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
+#endif
 
     uint32_t recv_count, send_count;
     recv_count = send_count = 0;
@@ -533,7 +509,7 @@ int main (int argc, char **argv)
             return 1;
         }
 
-        ret = parse_single_wc (ctx, is_server);
+        ret = parse_single_wc (ctx);
         if (ret)
         {
             LOG (stdout, "Failed to parse WC\n");
@@ -544,7 +520,7 @@ int main (int argc, char **argv)
         ret = ibv_next_poll (ctx->cq);
         if (!ret)
         {
-            ret = parse_single_wc (ctx, is_server);
+            ret = parse_single_wc (ctx);
             if (!ret)
                 ++recv_count;
         }

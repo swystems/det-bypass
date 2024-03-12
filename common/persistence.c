@@ -91,7 +91,7 @@ int _persistence_init (persistence_agent_t *agent, const char *filename)
         return -1;
     }
 
-    if (agent->flags & PERSISTENCE_F_MIN_MAX_LATENCY)
+    if (agent->flags & PERSISTENCE_M_MIN_MAX_LATENCY)
     {
         struct min_max_latency_data *aux = malloc (sizeof (struct min_max_latency_data));
         if (aux == NULL)
@@ -120,7 +120,7 @@ int _persistence_init (persistence_agent_t *agent, const char *filename)
     return 0;
 }
 
-persistence_agent_t *persistence_init (const char *filename, uint8_t flags)
+persistence_agent_t *persistence_init (const char *filename, uint32_t flags)
 {
     persistence_agent_t *agent = malloc (sizeof (persistence_agent_t));
     agent->flags = flags;

@@ -30,6 +30,7 @@
 #include "../common/net.h"
 #include "../common/persistence.h"
 #include "../common/utils.h"
+#include "src/args.h"
 #include "src/xdp-loading.h"
 
 #define STATS_THREAD 0
@@ -48,26 +49,8 @@ static const char *sec_name = "xdp";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong_xsk";
 static const char *mapname = "xsk_map";
 
-// Whether the current machine is the server or the client in the experiment.
-static bool is_server = false;
-
-static const char *outfile = "pingpong_xsk.dat";
+__attribute_maybe_unused__ static const char *outfile = "pingpong_xsk.dat";
 static persistence_agent_t *persistence_agent;
-
-/**
- * Prints instructions on how to use the program.
- *
- * @param prog the command that was run to execute the program.
- */
-void usage (char *prog)
-{
-    fprintf (stderr, "Usage: %s <ifname> <action> [extra arguments]\n", prog);
-    fprintf (stderr, "Actions:\n");
-    fprintf (stderr, "\t- start: start the pingpong experiment\n");
-    fprintf (stderr, "\t         on the server: %s <ifname> start <# of packets>\n", prog);
-    fprintf (stderr, "\t         on the client: %s <ifname> start <# of packets> <packets interval (ns)> <server IP>\n", prog);
-    fprintf (stderr, "\t- remove: remove XDP program\n");
-}
 
 struct config {
     __u32 xdp_flags;
@@ -369,9 +352,6 @@ static bool process_packet (struct xsk_socket_info *xsk,
     uint64_t receive_timestamp = get_time_ns ();
     uint8_t *pkt = xsk_umem__get_data (xsk->umem->buffer, addr);
 
-    uint8_t tmp_mac[ETH_ALEN];
-    uint32_t tmp_ip;
-
     if (len < sizeof (struct ethhdr) + sizeof (struct iphdr) + sizeof (struct pingpong_payload))
     {
         LOG (stderr, "Received packet is too small\n");
@@ -379,7 +359,6 @@ static bool process_packet (struct xsk_socket_info *xsk,
     }
 
     struct ethhdr *eth = (struct ethhdr *) pkt;
-    struct iphdr *ip = (struct iphdr *) (eth + 1);
     struct pingpong_payload *payload = packet_payload ((char *) pkt);
 
     if (eth->h_proto != htons (ETH_P_PINGPONG))
@@ -391,35 +370,36 @@ static bool process_packet (struct xsk_socket_info *xsk,
     if (payload->id >= cfg.iters)
         global_exit = true;
 
-    if (is_server)
-    {
-        //LOG (stdout, "Received ping with id %d, sending pong\n", payload->id);
-        // set ts[1] with arrival timestamp and ts[2] with send timestamp
-        payload->ts[1] = receive_timestamp;
+#if SERVER
+    struct iphdr *ip = (struct iphdr *) (eth + 1);
+    uint8_t tmp_mac[ETH_ALEN];
+    uint32_t tmp_ip;
 
-        // swap mac and ip addresses
-        memcpy (tmp_mac, eth->h_dest, ETH_ALEN);
-        memcpy (eth->h_dest, eth->h_source, ETH_ALEN);
-        memcpy (eth->h_source, tmp_mac, ETH_ALEN);
+    //LOG (stdout, "Received ping with id %d, sending pong\n", payload->id);
+    // set ts[1] with arrival timestamp and ts[2] with send timestamp
+    payload->ts[1] = receive_timestamp;
 
-        tmp_ip = ip->daddr;
-        ip->daddr = ip->saddr;
-        ip->saddr = tmp_ip;
+    // swap mac and ip addresses
+    memcpy (tmp_mac, eth->h_dest, ETH_ALEN);
+    memcpy (eth->h_dest, eth->h_source, ETH_ALEN);
+    memcpy (eth->h_source, tmp_mac, ETH_ALEN);
 
-        payload->ts[2] = get_time_ns ();
+    tmp_ip = ip->daddr;
+    ip->daddr = ip->saddr;
+    ip->saddr = tmp_ip;
 
-        /* Here we sent the packet out of the receive port. Note that
+    payload->ts[2] = get_time_ns ();
+
+    /* Here we sent the packet out of the receive port. Note that
          * we allocate one entry and schedule it. Your design would be
          * faster if you do batch processing/transmission */
-        xsk_send_packet (xsk, addr, len, true, false);
-        return true;// the packet is queued for transmission, so we must keep the frame
-    }
-    else
-    {
-        payload->ts[3] = receive_timestamp;
-        persistence_agent->write (persistence_agent, payload);
-        return false;// the packet has no reason to be kept
-    }
+    xsk_send_packet (xsk, addr, len, true, false);
+    return true;// the packet is queued for transmission, so we must keep the frame
+#else
+    payload->ts[3] = receive_timestamp;
+    persistence_agent->write (persistence_agent, payload);
+    return false;// the packet has no reason to be kept
+#endif
 }
 
 /**
@@ -574,21 +554,32 @@ int main (int argc __unused, char **argv __unused)
     struct xsk_umem_info *umem;
     struct xsk_socket_info *xsk_socket;
 
-    if (argc < 3)
+    bool remove = false;
+
+    cfg.ifname = NULL;
+    cfg.iters = 0;
+    char *server_ip = NULL;
+    cfg.interval = 0;
+
+#if SERVER
+    if (!xdp_parse_args (argc, argv, &cfg.ifname, &remove, &cfg.iters))
     {
-        usage (argv[0]);
+        xdp_print_usage (argv[0]);
         return EXIT_FAILURE;
     }
+#else
+    uint32_t persistence_flags = PERSISTENCE_M_ALL_TIMESTAMPS;
 
-    cfg.ifname = argv[1];
+    if (!xdp_parse_args (argc, argv, &cfg.ifname, &remove, &cfg.iters, &cfg.interval, &server_ip, &persistence_flags))
+    {
+        xdp_print_usage (argv[0]);
+        return EXIT_FAILURE;
+    }
+#endif
+
     cfg.ifindex = if_nametoindex (cfg.ifname);
-    if (cfg.ifindex == 0)
-    {
-        fprintf (stderr, "ERROR: Interface %s not found\n", cfg.ifname);
-        return EXIT_FAILURE;
-    }
 
-    if (strcmp (argv[2], "remove") == 0)
+    if (remove)
     {
         struct bpf_object *obj = read_xdp_file (filename);
         if (obj == NULL)
@@ -600,33 +591,12 @@ int main (int argc __unused, char **argv __unused)
         detach_xdp (obj, prog_name, cfg.ifindex, pinpath);
         return EXIT_SUCCESS;
     }
-    else if (strcmp (argv[2], "start") != 0)// if it's not "remove" or "start"
-    {
-        usage (argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    if (argc != 4 && argc != 6)
-    {
-        usage (argv[0]);
-        return EXIT_FAILURE;
-    }
-
-    is_server = argc == 4;
-
-    cfg.iters = atoi (argv[3]);
-    char *server_ip = NULL;
-    if (!is_server)
-    {
-        cfg.interval = atol (argv[4]);
-        server_ip = argv[5];
-    }
 
     uint8_t src_mac[ETH_ALEN];
     uint32_t src_ip;
     uint8_t dest_mac[ETH_ALEN];
     uint32_t dest_ip;
-    exchange_eth_ip_addresses (cfg.ifindex, server_ip, is_server, src_mac, dest_mac, &src_ip, &dest_ip);
+    exchange_eth_ip_addresses (cfg.ifindex, server_ip, SERVER, src_mac, dest_mac, &src_ip, &dest_ip);
 
     struct bpf_object *obj = read_xdp_file (filename);
     if (obj == NULL)
@@ -699,11 +669,10 @@ int main (int argc __unused, char **argv __unused)
     fprintf (stdout, "Starting experiment\n");
     fflush (stdout);
 
-    if (!is_server)
-    {
-        persistence_agent = persistence_init (outfile, PERSISTENCE_F_MIN_MAX_LATENCY);
+#if !SERVER
+        persistence_agent = persistence_init (outfile, persistence_flags);
         initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
-    }
+#endif
 
     /* Receive and count packets than drop them */
     rx_and_process (&cfg, xsk_socket);
@@ -716,7 +685,7 @@ int main (int argc __unused, char **argv __unused)
     xsk_socket__delete (xsk_socket->xsk);
     xsk_umem__delete (umem->umem);
 
-    if (!is_server)
+    if (persistence_agent)
         persistence_agent->close (persistence_agent);
 
     return EXIT_SUCCESS;
