@@ -5,19 +5,13 @@
     - "!all"
   tasks:
     - name: Build pingpong programs
-      block:
-        - name: Build XDP programs
-          shell: |
-            cd {{ base_dir }}/xdp/build
-            cmake ..
-            make clean
-            make
-        - name: Build RDMA programs
-          shell: |
-            cd {{ base_dir }}/rdma/build
-            cmake ..
-            make clean
-            make
+      shell: |
+        cd {{ base_dir }}
+        mkdir -p build
+        cd build
+        cmake -DSERVER={{ 1 if 'rx_nodes' in group_names else 0 }} -DDEBUG={{ debug | default('0') }} ..
+        make clean
+        make
 
     - name: Reload ldconfig
       become: yes

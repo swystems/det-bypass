@@ -1,0 +1,17 @@
+# Description: Run a client program
+# Parameters:
+#   - prog_title: Title of the program, for display purposes (e.g. "XDP Poll")
+#   - prog_dir: Directory where the program is located, relative to the base directory (e.g. "xdp")
+#   - prog_name: Name of the program (e.g. "xdp_poll")
+#   - devices: List of devices to run the program on (e.g. "eth0")
+#   - extra_args: Extra argument to pass to the program (e.g. "-g 0" for RDMA programs)
+# The rest of the parameters is specified in test.inventory.yaml
+---
+- name: "Run {{ prog_title }} (Client)"
+  become: yes
+  shell: |
+    cd {{ base_dir }}/build/{{ prog_dir }}
+    {{ execute_command }}./{{ prog_name }} -d {{ item }} -i {{ interval }} -p {{ packets }} -s {{ hostvars[groups['rx_nodes'][0]]['ip'] }} {{extra_args | default('')}} > /dev/null 2>&1 &
+  with_items: "{{ devices }}"
+  async: 10000000000
+  poll: 0

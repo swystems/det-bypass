@@ -2,25 +2,24 @@
 - hosts: rx_nodes
   gather_facts: no
   tasks:
-    - name: Run XDP Poll (Server)
-      become: yes
-      shell: |
-        cd {{ base_dir }}/xdp/build
-        {{ execute_command }}./pp_poll {{ item }} remove
-        {{ execute_command }}./pp_poll {{ item }} start {{ packets }}
-        {{ execute_command }}./pp_poll {{ item }} remove
-      with_items: "{{ devs }}"
-      async: "{{ timeout }}"
-      poll: 0
+    - import_tasks: tasks/run_server.yaml
+      vars:
+        prog_title: "XDP Poll"
+        prog_dir: "xdp"
+        prog_name: "pp_poll"
+        devices: "{{ devs }}"
 
 - hosts: tx_nodes
   gather_facts: no
   tasks:
-    - name: Run XDP Poll (Client)
-      become: yes
-      shell: |
-        cd {{ base_dir }}/xdp/build
-        {{ execute_command }}./pp_poll {{ item }} remove
-        {{ execute_command }}./pp_poll {{ item }} start {{ packets }} {{ interval }} {{ hostvars[groups['rx_nodes'][0]]['ip'] }}
-        {{ execute_command }}./pp_poll {{ item }} remove
-      with_items: "{{ devs }}"
+    - import_tasks: tasks/run_client.yaml
+      vars:
+        prog_title: "XDP Poll"
+        prog_dir: "xdp"
+        prog_name: "pp_poll"
+        devices: "{{ devs }}"
+
+    - import_tasks: tasks/wait.yaml
+      vars:
+        prog_title: "XDP Poll"
+        prog_name: "pp_poll"

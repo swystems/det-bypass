@@ -1,7 +1,7 @@
 all:
   vars:
-    interval: 5000 # ns
+    interval: 10000 # ns
     packets: 1000000
     run_isolated: false
     execute_command: "{{ 'taskset -c ' + isolated_cores + ' ' if run_isolated else '' }}"
-    timeout: "{{ ((interval * packets * 20) / 1000000000 + 1) | int }}"
+    timeout: "{{ ((interval * packets * 1.3) / 1000000000 + 1) | round | int }}"
