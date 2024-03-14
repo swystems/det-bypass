@@ -39,6 +39,50 @@ def compute_jitter(latencies: np.ndarray) -> np.ndarray:
     return np.sqrt(s/N)
 
 
+def compute_peaks(diffs: np.ndarray, threshold: int = 0) -> list[np.array]:
+    """
+    Analyze the diffs and detect the indices of packets identified as peaks.
+
+    A peak is a packet that in a specific segment of the path SENDER->RECEIVER->SENDER
+    got considerably delayed (> `threshold`). 
+
+    This function returns a list of 3 `np.array`, where each list contains the packet
+    that got delayed in that segment. This means that if in the return list the first 
+    array contains the packet `5`, that packet had a delay while traveling from the
+    SENDER to the RECEIVER.
+
+    :param diffs: The difference of each packet in each segment. np.ndarray of size
+                  number of packets x 4.
+    :param threshold: The threshold which makes a packet be a "peak". If 0 or negative,
+                      4*STD will be used.
+    :return a list of 3 np.array, where array `i` contains the packets that got delayed
+            from `diffs[i-1]` to `diffs[i]`. The values are the indices in the given diffs,
+            not the packet id.
+    """
+
+    if threshold <= 0:
+        s = 0
+        for phase in range(1,4):
+            s += 5*np.std(diffs[:,phase+1]-diffs[:,phase])
+        threshold = s/3
+        print(f"Using threshold {threshold}ns")
+    
+    done = set()
+    result = [[],[],[]] 
+    for phase in range(1,4):
+        anomalies = np.argwhere(abs(diffs[:,phase+1]-diffs[:,phase]) > threshold).flatten()
+        for i in anomalies:
+            done.add(i)
+        result[phase-1] = anomalies 
+    return result
+
+
+def compute_percentile(values: np.array, threshold: int) -> float:
+    mean = np.mean(values)
+    return len(np.argwhere(abs(values-mean) < threshold))*100/len(values)
+    
+
+
 def plot_multi_scatter(ax, xvals, *args):
     for arg,name in args:
         y = np.full(xvals, None)
@@ -57,20 +101,24 @@ def plot_latencies(*args, iters=0):
     ax.legend()
 
 
-def plot_diffs(diffs: np.ndarray, iters=0):
+def plot_diffs(diffs: np.ndarray, iters=0, with_peaks=True, peaks_threshold=0):
     fig,axs = plt.subplots(2,2,figsize=(12,6),layout="constrained")
     fig.get_layout_engine().set(w_pad=0.15, h_pad=0.15, hspace=0, wspace=0)
     fig.suptitle("Timestamp difference between consequent packets")
-    values = np.full([iters,4], None)
-    for diff in diffs:
-        values[diff[0]-1] = diff[1:]
+
+    peaks = None
+    if with_peaks:
+        peaks = compute_peaks(diffs, peaks_threshold)
+    
     for i in range(2*2):
         ax = axs[i//2][i%2]
         ax.grid(linestyle="-")
         ax.set_xlabel("Packet index")
         ax.set_ylabel("Timestamp difference (ns)")
         ax.set_title(f"{'PING' if i<2 else 'PONG'} at {'RECV' if i&1 else 'SEND'}")
-        ax.scatter(x=range(iters), y=values[:,i], s=1)
+        ax.scatter(x=diffs[:,0], y=diffs[:,i+1], s=1)
+        if with_peaks and i > 0 and len(peaks[i-1])>0:
+            ax.scatter(x=diffs[peaks[i-1],0], y=diffs[peaks[i-1],i+1], s=1, c="red")
 
 
 def copy_remote_file (remote_addr: str, local_path: str):
