@@ -84,7 +84,7 @@ bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_
     *interval = 0;
     *remove = false;
 
-    while ((opt = getopt_long (argc, argv, "d:p:i:s:r:h", long_options, NULL)) != -1)
+    while ((opt = getopt_long (argc, argv, "d:p:i:s:r:hm:", long_options, NULL)) != -1)
     {
         switch (opt)
         {
