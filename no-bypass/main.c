@@ -158,7 +158,7 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    persistence_agent = persistence_init ("no-bypass.dat", persistence_flag);
+    persistence_agent = persistence_init ("no-bypass.dat", persistence_flag, &interval);
     if (!persistence_agent)
     {
         LOG (stderr, "Failed to initialize persistence agent\n");

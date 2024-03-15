@@ -670,8 +670,8 @@ int main (int argc __unused, char **argv __unused)
     fflush (stdout);
 
 #if !SERVER
-        persistence_agent = persistence_init (outfile, persistence_flags);
-        initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
+    persistence_agent = persistence_init (outfile, persistence_flags, &cfg.interval);
+    initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
 #endif
 
     /* Receive and count packets than drop them */

@@ -341,7 +341,7 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    persistence = persistence_init (outfile, persistence_flags);
+    persistence = persistence_init (outfile, persistence_flags, &interval);
     if (!persistence)
     {
         fprintf (stderr, "ERR: persistence_init failed\n");

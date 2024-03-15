@@ -437,7 +437,7 @@ int main (int argc, char **argv)
         ib_print_usage (argv[0]);
         return 1;
     }
-    persistence = persistence_init ("rc.dat", persistence_flags);
+    persistence = persistence_init ("rc.dat", persistence_flags, &interval);
     if (!persistence)
     {
         fprintf (stderr, "Couldn't initialize persistence agent\n");

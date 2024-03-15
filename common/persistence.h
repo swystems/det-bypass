@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include <assert.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -52,6 +53,16 @@ struct min_max_latency_data {
     uint64_t max;
     struct pingpong_payload min_payload;
     struct pingpong_payload max_payload;
+};
+
+#define NUM_BUCKETS 10000
+#define OFFSET 400000
+
+struct bucket_data {
+    uint64_t send_interval;
+    uint64_t *buckets_abs_latency;
+    uint64_t *buckets_rel_latency[4];
+    struct pingpong_payload prev_payload;
 };
 
 /**
@@ -110,6 +121,8 @@ typedef struct persistence_agent {
  * This function should be called before any other persistence function and only once.
  *
  * @param filename the name of the file to store data
+ * @param flags flags to define the type of measurement to store
+ * @param aux auxiliary data to be used by the persistence agent
  * @return 0 on success, -1 on error
  */
-persistence_agent_t *persistence_init (const char *filename, uint32_t flags);
+persistence_agent_t *persistence_init (const char *filename, uint32_t flags, void *aux);

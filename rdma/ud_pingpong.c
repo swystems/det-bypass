@@ -465,7 +465,7 @@ int main (int argc, char **argv)
         return 1;
     }
 
-    persistence_agent = persistence_init ("ud.dat", persistence_flags);
+    persistence_agent = persistence_init ("ud.dat", persistence_flags, &interval);
     if (!persistence_agent)
     {
         LOG (stderr, "Failed to initialize persistence agent\n");
