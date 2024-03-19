@@ -251,7 +251,7 @@ inline int send_pingpong_packet (int sock, const char *restrict buf, struct sock
 }
 
 struct sender_data {
-    uint32_t iters;
+    uint64_t iters;
     uint64_t interval;
     char *base_packet;
     struct sockaddr_ll *sock_addr;
@@ -287,7 +287,7 @@ void *thread_send_packets (void *args)
 
 static pthread_t sender_thread;
 
-int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux)
+int start_sending_packets (uint64_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux)
 {
     struct sender_data *data = malloc (sizeof (struct sender_data));
     if (!data)

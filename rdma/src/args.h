@@ -12,7 +12,7 @@
 void ib_print_usage (char *prog);
 
 #if SERVER
-bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint32_t *iters);
+bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint64_t *iters);
 #else
-bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags);
+bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint64_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags);
 #endif

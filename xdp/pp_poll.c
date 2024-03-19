@@ -143,7 +143,7 @@ int send_packet (char *buf, const int packet_id, struct sockaddr_ll *sock_addr, 
  * @param iters the number of packets to send
  * @param interval only for the client, the interval between packets
  */
-void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, __attribute_maybe_unused__ const uint32_t interval)
+void start_pingpong (int ifindex, const char *server_ip, const uint64_t iters, __attribute_maybe_unused__ const uint32_t interval)
 {
     uint8_t src_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint8_t dest_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -322,7 +322,7 @@ int main (int argc, char **argv)
 {
     char *ifname = argv[1];
     bool remove;
-    uint32_t iters = 0;
+    uint64_t iters = 0;
     uint64_t interval = 0;
     char *server_ip = NULL;
 

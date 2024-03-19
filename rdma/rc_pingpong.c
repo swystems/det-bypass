@@ -420,7 +420,7 @@ int main (int argc, char **argv)
 {
     char *ib_devname = NULL;
     int port_gid_idx = 0;
-    uint32_t iters = 0;
+    uint64_t iters = 0;
     char *server_ip = NULL;
 
 #if SERVER

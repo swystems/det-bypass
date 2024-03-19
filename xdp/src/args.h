@@ -12,7 +12,7 @@
 void xdp_print_usage (char *prog);
 
 #if SERVER
-bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_t *iters);
+bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint64_t *iters);
 #else
-bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags);
+bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint64_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags);
 #endif

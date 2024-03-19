@@ -79,7 +79,7 @@ typedef int (*send_packet_t) (char *, const int, struct sockaddr_ll *, void *);
  * @param send_packet the function to use to send the packets, called by the sending thread.
  * @return 0 on success, -1 on failure
  */
-int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux);
+int start_sending_packets (uint64_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux);
 
 /**
  * Retrieve the local interface MAC address.
