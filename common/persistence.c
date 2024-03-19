@@ -2,12 +2,16 @@
 
 __always_inline uint32_t bucket_idx (const int64_t val, const int64_t min, const int64_t max)
 {
+    if (UNLIKELY (val < min))
+        return 0;
+    if (UNLIKELY (val > max))
+        return NUM_BUCKETS + 1;
     const int64_t bucket_size = (max - min) / NUM_BUCKETS;
     if (UNLIKELY (val < min || val > max))
     {
         return -1;
     }
-    return (val - min) / bucket_size;
+    return (val - min) / bucket_size + 1;
 }
 
 __always_inline int bucket_compute_hugepage_size ()
@@ -15,8 +19,17 @@ __always_inline int bucket_compute_hugepage_size ()
     const uint64_t page_size = sysconf (_SC_PAGESIZE);
     // 4 arrays of NUM_BUCKETS elements (relative latencies), plus 1 array of NUM_BUCKETS elements (absolute latencies)
     // + page_size - 1 to round up
-    const uint32_t required_pages = (sizeof (uint64_t) * NUM_BUCKETS * 5 + page_size - 1) / page_size;
+    // NUM_BUCKETS + 2 because bucket 0 is for values < min and bucket NUM_BUCKETS + 1 is for values > max
+    const uint32_t required_pages = (sizeof (uint64_t) * (NUM_BUCKETS + 2) * 5 + page_size - 1) / page_size;
     return required_pages * page_size;
+}
+
+__always_inline void bucket_ranges (const uint64_t interval, uint64_t *rel_min, uint64_t *rel_max, uint64_t *abs_min, uint64_t *abs_max)
+{
+    *rel_min = interval >= OFFSET ? interval - OFFSET : 0;
+    *rel_max = interval + OFFSET;
+    *abs_min = 0;
+    *abs_max = interval + 2 * OFFSET;
 }
 
 int persistence_write_all_timestamps (persistence_agent_t *agent, const struct pingpong_payload *payload)
@@ -69,41 +82,37 @@ int persistence_write_buckets (persistence_agent_t *agent, const struct pingpong
         ts_diff[i] = payload->ts[i] - aux->prev_payload.ts[i];
     }
 
-    const uint64_t rel_min = aux->send_interval - OFFSET;
-    const uint64_t rel_max = aux->send_interval + OFFSET;
-    const uint64_t abs_min = 0;
-    const uint64_t abs_max = aux->send_interval + 2 * OFFSET;
+    uint64_t rel_min, rel_max, abs_min, abs_max;
+    bucket_ranges (aux->send_interval, &rel_min, &rel_max, &abs_min, &abs_max);
 
-    /* Check if all relative latencies are within bounds. Provides some sort of atomicity. */
     for (int i = 0; i < 4; ++i)
     {
-        const uint32_t idx = bucket_idx (ts_diff[i], rel_min, rel_max);
-        if (UNLIKELY (idx >= NUM_BUCKETS))
+        if (UNLIKELY (ts_diff[i] < aux->min_values.rel_latency[i]))
         {
-            fprintf (stderr, "%d: %lu %lu %lu %lu\n", payload->id, ts_diff[0], ts_diff[1], ts_diff[2], ts_diff[3]);
-            goto exit;// it's ok, we just skip the packet but notify the user.
+            aux->min_values.rel_latency[i] = ts_diff[i];
         }
-    }
-
-    for (int i = 0; i < 4; ++i)
-    {
+        if (UNLIKELY (ts_diff[i] > aux->max_values.rel_latency[i]))
+        {
+            aux->max_values.rel_latency[i] = ts_diff[i];
+        }
         const uint32_t idx = bucket_idx (ts_diff[i], rel_min, rel_max);
         aux->buckets[idx].rel_latency[i]++;
     }
 
     const uint64_t abs_latency = compute_latency (payload);
 
-    const uint32_t idx = bucket_idx (abs_latency, abs_min, abs_max);
-    if (idx < NUM_BUCKETS)
+    if (UNLIKELY (abs_latency < aux->min_values.abs_latency))
     {
-        aux->buckets[idx].abs_latency++;
+        aux->min_values.abs_latency = abs_latency;
     }
-    else
+    if (UNLIKELY (abs_latency > aux->max_values.abs_latency))
     {
-        fprintf (stderr, "%d: %lu\n", payload->id, abs_latency);
+        aux->max_values.abs_latency = abs_latency;
     }
 
-exit:
+    const uint32_t idx = bucket_idx (abs_latency, abs_min, abs_max);
+    aux->buckets[idx].abs_latency++;
+
     aux->prev_payload = *payload;
     return 0;
 }
@@ -151,7 +160,29 @@ int persistence_close_buckets (persistence_agent_t *agent)
 {
     struct bucket_data *aux = agent->data->aux;
 
-    for (size_t i = 0; i < NUM_BUCKETS; ++i)
+    uint64_t rel_min, rel_max, abs_min, abs_max;
+    bucket_ranges (aux->send_interval, &rel_min, &rel_max, &abs_min, &abs_max);
+
+    const uint64_t rel_bucket_size = (rel_max - rel_min) / NUM_BUCKETS;
+    const uint64_t abs_bucket_size = (abs_max - abs_min) / NUM_BUCKETS;
+
+    fprintf (agent->data->file, "REL %lu %lu %lu\n", rel_min, rel_max, rel_bucket_size);
+    fprintf (agent->data->file, "ABS %lu %lu %lu\n", abs_min, abs_max, abs_bucket_size);
+
+    fprintf (agent->data->file, "MIN %lu %lu %lu %lu %lu\n",
+             aux->min_values.rel_latency[0],
+             aux->min_values.rel_latency[1],
+             aux->min_values.rel_latency[2],
+             aux->min_values.rel_latency[3],
+             aux->min_values.abs_latency);
+    fprintf (agent->data->file, "MAX %lu %lu %lu %lu %lu\n",
+             aux->max_values.rel_latency[0],
+             aux->max_values.rel_latency[1],
+             aux->max_values.rel_latency[2],
+             aux->max_values.rel_latency[3],
+             aux->max_values.abs_latency);
+
+    for (size_t i = 0; i < NUM_BUCKETS + 2; ++i)
     {
         fprintf (agent->data->file, "%lu %lu %lu %lu %lu\n",
                  aux->buckets[i].rel_latency[0],
@@ -193,7 +224,16 @@ int persistence_init_buckets (persistence_agent_t *agent, void *init_aux)
         LOG (stderr, "ERROR: Could not allocate memory for bucket_data\n");
         return -1;
     }
+    mlock (aux, sizeof (struct bucket_data));
     aux->send_interval = interval;
+
+    for (size_t i = 0; i < 4; ++i)
+    {
+        aux->min_values.rel_latency[i] = UINT64_MAX;
+        aux->max_values.rel_latency[i] = 0;
+    }
+    aux->min_values.abs_latency = UINT64_MAX;
+    aux->max_values.abs_latency = 0;
 
     uint64_t memory_size = bucket_compute_hugepage_size ();
     // Allocate memory for the buckets on a huge page

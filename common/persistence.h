@@ -57,20 +57,25 @@ struct min_max_latency_data {
     struct pingpong_payload max_payload;
 };
 
-#define NUM_BUCKETS 10000
+#define NUM_BUCKETS 5000
 #define OFFSET 400000
+
+struct bucket {
+    uint64_t rel_latency[4];
+    uint64_t abs_latency;
+};
 
 struct bucket_data {
     uint64_t send_interval;
+    struct bucket min_values;
+    struct bucket max_values;
+
     // The layout in memory is as follows:
     // [BUCKET 0 SEND PING] [BUCKET 0 RECV PING] [BUCKET 0 SEND PONG] [BUCKET 0 RECV PONG] [BUCKET 0 LATENCY]
     // The layout is handled manually for convenience.
     union {
         uint64_t *ptr;
-        struct {
-            uint64_t rel_latency[4];
-            uint64_t abs_latency;
-        } *buckets;
+        struct bucket *buckets;
     };
     struct pingpong_payload prev_payload;
 };
