@@ -7,7 +7,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mman.h>
 #include <sys/queue.h>
+#include <unistd.h>
 
 enum persistence_output_flags {
     PERSISTENCE_F_FILE = 1U << 0,
@@ -60,8 +62,16 @@ struct min_max_latency_data {
 
 struct bucket_data {
     uint64_t send_interval;
-    uint64_t *buckets_abs_latency;
-    uint64_t *buckets_rel_latency[4];
+    // The layout in memory is as follows:
+    // [BUCKET 0 SEND PING] [BUCKET 0 RECV PING] [BUCKET 0 SEND PONG] [BUCKET 0 RECV PONG] [BUCKET 0 LATENCY]
+    // The layout is handled manually for convenience.
+    union {
+        uint64_t *ptr;
+        struct {
+            uint64_t rel_latency[4];
+            uint64_t abs_latency;
+        } *buckets;
+    };
     struct pingpong_payload prev_payload;
 };
 

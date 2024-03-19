@@ -1,14 +1,22 @@
 #include "persistence.h"
 
-__always_inline int bucket_idx (int64_t val, int64_t min, int64_t max, size_t num_buckets)
+__always_inline uint32_t bucket_idx (const int64_t val, const int64_t min, const int64_t max)
 {
-    uint64_t _max = max > 0 ? max : 0;
-    uint64_t _min = min < 0 ? min : 0;
+    const int64_t bucket_size = (max - min) / NUM_BUCKETS;
+    if (UNLIKELY (val < min || val > max))
+    {
+        return -1;
+    }
+    return (val - min) / bucket_size;
+}
 
-    size_t bucket_size = (_max - _min) / num_buckets;
-    size_t idx = (val - _min) / bucket_size;
-
-    return idx;
+__always_inline int bucket_compute_hugepage_size ()
+{
+    const uint64_t page_size = sysconf (_SC_PAGESIZE);
+    // 4 arrays of NUM_BUCKETS elements (relative latencies), plus 1 array of NUM_BUCKETS elements (absolute latencies)
+    // + page_size - 1 to round up
+    const uint32_t required_pages = (sizeof (uint64_t) * NUM_BUCKETS * 5 + page_size - 1) / page_size;
+    return required_pages * page_size;
 }
 
 int persistence_write_all_timestamps (persistence_agent_t *agent, const struct pingpong_payload *payload)
@@ -61,32 +69,42 @@ int persistence_write_buckets (persistence_agent_t *agent, const struct pingpong
         ts_diff[i] = payload->ts[i] - aux->prev_payload.ts[i];
     }
 
-    for (int i = 0; i < 4; i++)
+    const uint64_t rel_min = aux->send_interval - OFFSET;
+    const uint64_t rel_max = aux->send_interval + OFFSET;
+    const uint64_t abs_min = 0;
+    const uint64_t abs_max = aux->send_interval + 2 * OFFSET;
+
+    /* Check if all relative latencies are within bounds. Provides some sort of atomicity. */
+    for (int i = 0; i < 4; ++i)
     {
-        int idx = bucket_idx (ts_diff[i], aux->send_interval - OFFSET, aux->send_interval + OFFSET, NUM_BUCKETS);
-        if (idx >= 0 && idx < NUM_BUCKETS)
+        const uint32_t idx = bucket_idx (ts_diff[i], rel_min, rel_max);
+        if (UNLIKELY (idx >= NUM_BUCKETS))
         {
-            LOG (stderr, "ERROR: Packet %d has relative latency %lu, which is out of bounds\n", payload->id, ts_diff[i]);
-            return 0;// not really a big deal, we just ignore that round, but we still flag it
+            fprintf (stderr, "%d: %lu %lu %lu %lu\n", payload->id, ts_diff[0], ts_diff[1], ts_diff[2], ts_diff[3]);
+            goto exit;// it's ok, we just skip the packet but notify the user.
         }
     }
 
     for (int i = 0; i < 4; ++i)
     {
-        int idx = bucket_idx (ts_diff[i], aux->send_interval - OFFSET, aux->send_interval + OFFSET, NUM_BUCKETS);
-        if (idx >= 0 && idx < NUM_BUCKETS)
-        {
-            LOG (stderr, "ERROR: Packet %d has absolute latency %lu, which is out of bounds\n", payload->id, ts_diff[i]);
-        }
-        aux->buckets_rel_latency[i][idx]++;
+        const uint32_t idx = bucket_idx (ts_diff[i], rel_min, rel_max);
+        aux->buckets[idx].rel_latency[i]++;
     }
 
-    uint64_t abs_latency = compute_latency (payload);
-    int idx = bucket_idx (abs_latency, 0, aux->send_interval + 2 * OFFSET, NUM_BUCKETS);
-    aux->buckets_abs_latency[idx]++;
+    const uint64_t abs_latency = compute_latency (payload);
 
+    const uint32_t idx = bucket_idx (abs_latency, abs_min, abs_max);
+    if (idx < NUM_BUCKETS)
+    {
+        aux->buckets[idx].abs_latency++;
+    }
+    else
+    {
+        fprintf (stderr, "%d: %lu\n", payload->id, abs_latency);
+    }
+
+exit:
     aux->prev_payload = *payload;
-
     return 0;
 }
 
@@ -135,22 +153,67 @@ int persistence_close_buckets (persistence_agent_t *agent)
 
     for (size_t i = 0; i < NUM_BUCKETS; ++i)
     {
-        fprintf (agent->data->file, "%lu %lu %lu %lu\n", aux->buckets_rel_latency[0][i], aux->buckets_rel_latency[1][i], aux->buckets_rel_latency[2][i], aux->buckets_rel_latency[3][i]);
-    }
-    fprintf (agent->data->file, "---\n");
-    for (size_t i = 0; i < NUM_BUCKETS; ++i)
-    {
-        fprintf (agent->data->file, "%lu\n", aux->buckets_abs_latency[i]);
+        fprintf (agent->data->file, "%lu %lu %lu %lu %lu\n",
+                 aux->buckets[i].rel_latency[0],
+                 aux->buckets[i].rel_latency[1],
+                 aux->buckets[i].rel_latency[2],
+                 aux->buckets[i].rel_latency[3],
+                 aux->buckets[i].abs_latency);
     }
 
-    free (aux->buckets_abs_latency);
-    for (int i = 0; i < 4; i++)
-    {
-        free (aux->buckets_rel_latency[i]);
-    }
+    munmap (aux->ptr, bucket_compute_hugepage_size ());
     free (aux);
 
     return persistence_close (agent);
+}
+
+int persistence_init_min_max_latency (persistence_agent_t *agent, void *init_aux __unused)
+{
+    struct min_max_latency_data *aux = malloc (sizeof (struct min_max_latency_data));
+    if (aux == NULL)
+    {
+        LOG (stderr, "ERROR: Could not allocate memory for min_max_latency_data\n");
+        return -1;
+    }
+    aux->min = UINT64_MAX;
+    aux->max = 0;
+    agent->data->aux = aux;
+
+    agent->write = persistence_write_min_max_latency;
+    agent->close = persistence_close_min_max;
+    return 0;
+}
+
+int persistence_init_buckets (persistence_agent_t *agent, void *init_aux)
+{
+    const uint64_t interval = *(const uint64_t *) init_aux;
+    struct bucket_data *aux = calloc (1, sizeof (struct bucket_data));
+    if (aux == NULL)
+    {
+        LOG (stderr, "ERROR: Could not allocate memory for bucket_data\n");
+        return -1;
+    }
+    aux->send_interval = interval;
+
+    uint64_t memory_size = bucket_compute_hugepage_size ();
+    // Allocate memory for the buckets on a huge page
+    void *ptr = mmap (NULL, memory_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_LOCKED, -1, 0);
+    if (ptr == MAP_FAILED)
+    {
+        LOG (stderr, "ERROR: Could not allocate memory for buckets_rel_latency\n");
+        return -1;
+    }
+
+    // Lock the memory to avoid major page faults
+    mlock (ptr, memory_size);
+
+    aux->ptr = ptr;
+
+    agent->data->aux = aux;
+
+    agent->write = persistence_write_buckets;
+    agent->close = persistence_close_buckets;
+    return 0;
 }
 
 int _persistence_init (persistence_agent_t *agent, const char *filename, void *init_aux)
@@ -170,51 +233,22 @@ int _persistence_init (persistence_agent_t *agent, const char *filename, void *i
         return -1;
     }
 
+    data->file = file;
+    agent->data = data;
+
     if (agent->flags & PERSISTENCE_M_MIN_MAX_LATENCY)
     {
-        struct min_max_latency_data *aux = malloc (sizeof (struct min_max_latency_data));
-        if (aux == NULL)
+        if (persistence_init_min_max_latency (agent, init_aux) != 0)
         {
-            LOG (stderr, "ERROR: Could not allocate memory for min_max_latency_data\n");
             return -1;
         }
-        aux->min = UINT64_MAX;
-        aux->max = 0;
-        data->aux = aux;
-
-        agent->write = persistence_write_min_max_latency;
-        agent->close = persistence_close_min_max;
     }
     else if (agent->flags & PERSISTENCE_M_BUCKETS)
     {
-        uint64_t interval = *(uint64_t *) init_aux;
-        struct bucket_data *aux = calloc (1, sizeof (struct bucket_data));
-        if (aux == NULL)
+        if (persistence_init_buckets (agent, init_aux) != 0)
         {
-            LOG (stderr, "ERROR: Could not allocate memory for bucket_data\n");
             return -1;
         }
-        aux->send_interval = interval;
-
-        for (int i = 0; i < 4; i++)
-        {
-            aux->buckets_rel_latency[i] = calloc (NUM_BUCKETS, sizeof (uint64_t));
-            if (aux->buckets_rel_latency[i] == NULL)
-            {
-                LOG (stderr, "ERROR: Could not allocate memory for buckets_abs_latency\n");
-                return -1;
-            }
-        }
-        aux->buckets_abs_latency = calloc (NUM_BUCKETS, sizeof (uint64_t));
-        if (aux->buckets_abs_latency == NULL)
-        {
-            LOG (stderr, "ERROR: Could not allocate memory for buckets_rel_latency\n");
-            return -1;
-        }
-        data->aux = aux;
-
-        agent->write = persistence_write_buckets;
-        agent->close = persistence_close_buckets;
     }
     else
     {
@@ -223,9 +257,6 @@ int _persistence_init (persistence_agent_t *agent, const char *filename, void *i
 
         data->aux = NULL;
     }
-
-    data->file = file;
-    agent->data = data;
 
     return 0;
 }
