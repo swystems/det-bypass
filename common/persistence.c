@@ -26,10 +26,19 @@ __always_inline int bucket_compute_hugepage_size ()
 
 __always_inline void bucket_ranges (const uint64_t interval, uint64_t *rel_min, uint64_t *rel_max, uint64_t *abs_min, uint64_t *abs_max)
 {
-    *rel_min = interval >= OFFSET ? interval - OFFSET : 0;
-    *rel_max = interval + OFFSET;
+    // Always make sure that the range is 2*OFFSET, in order to ensure that every bucket has the same size
+    if (interval < OFFSET)
+    {
+        *rel_min = 0;
+        *rel_max = 2 * OFFSET;
+    }
+    else
+    {
+        *rel_min = interval - OFFSET;
+        *rel_max = interval + OFFSET;
+    }
     *abs_min = 0;
-    *abs_max = interval + 2 * OFFSET;
+    *abs_max = interval + OFFSET;
 }
 
 int persistence_write_all_timestamps (persistence_agent_t *agent, const struct pingpong_payload *payload)

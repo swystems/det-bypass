@@ -57,8 +57,9 @@ struct min_max_latency_data {
     struct pingpong_payload max_payload;
 };
 
-#define NUM_BUCKETS 5000
-#define OFFSET 400000
+/* Range in nanoseconds of each bucket */
+#define NUM_BUCKETS 10000
+#define OFFSET 500000
 
 struct bucket {
     uint64_t rel_latency[4];
