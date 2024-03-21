@@ -1,5 +1,5 @@
 ---
-- hosts: rx_nodes
+- hosts: rdma_rx
   gather_facts: no
   tasks:
     - import_tasks: tasks/run_server.yaml
@@ -10,7 +10,7 @@
         devices: "{{ ibdevs }}"
         extra_args: "-g 0"
 
-- hosts: tx_nodes
+- hosts: rdma_tx
   gather_facts: no
   tasks:
     - import_tasks: tasks/run_client.yaml

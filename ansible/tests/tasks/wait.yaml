@@ -10,3 +10,4 @@
       sleep {{ ((timeout | int)/10) | round | int }}
       ps -ef | grep -v grep | grep -q {{ prog_name }} || break
     done
+  when: sync_wait is not defined or sync_wait == "yes"

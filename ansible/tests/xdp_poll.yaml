@@ -1,5 +1,5 @@
 ---
-- hosts: rx_nodes
+- hosts: poll_rx
   gather_facts: no
   tasks:
     - import_tasks: tasks/run_server.yaml
@@ -9,7 +9,7 @@
         prog_name: "pp_poll"
         devices: "{{ devs }}"
 
-- hosts: tx_nodes
+- hosts: poll_tx
   gather_facts: no
   tasks:
     - import_tasks: tasks/run_client.yaml
