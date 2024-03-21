@@ -79,8 +79,6 @@ int add_packet_to_map (struct pingpong_payload *payload)
         return -1;
     }
 
-    bpf_printk ("Adding packet id: %u at index: %u\n", payload->id, key);
-
     *old_payload = *payload;
 
     return 0;

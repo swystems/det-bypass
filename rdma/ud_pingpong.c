@@ -301,7 +301,6 @@ int pp_post_recv (struct pingpong_context *ctx, int queue_idx)
  */
 int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey, int queue_idx)
 {
-    LOG (stdout, "Waiting for lock\n");
     const struct ib_node_info *remote = &ctx->remote_info;
     struct ibv_sge list = {
         .addr = buffer + 40,
@@ -366,7 +365,7 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc)
     BUSY_WAIT (BITSET_TEST (ctx->pending_send, queue_idx));
     ctx->recv_payloads[queue_idx]->ts[1] = ts;
     ctx->recv_payloads[queue_idx]->ts[2] = get_time_ns ();
-    LOG (stdout, "Sending back packet %d from queue %d\n", ctx->recv_payloads[queue_idx]->id, queue_idx);
+    LOG (stdout, "Sending back packet %llu from queue %d\n", ctx->recv_payloads[queue_idx]->id, queue_idx);
     if (pp_post_send (ctx, (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE, ctx->recv_mr->lkey, queue_idx))
     {
         LOG (stderr, "Couldn't post send\n");
@@ -430,7 +429,7 @@ int pp_ib_connect (struct pingpong_context *ctx, int gidx, struct ib_node_info *
     return 0;
 }
 
-int pp_send_single_packet (char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+int pp_send_single_packet (char *buf __unused, const uint64_t packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
 
@@ -531,7 +530,7 @@ int main (int argc, char **argv)
     start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
 #endif
 
-    uint32_t recv_idx = 0;
+    uint64_t recv_idx = 0;
     while (LIKELY (recv_idx < iters))
     {
         struct ibv_wc wc[2];

@@ -50,7 +50,7 @@ int persistence_write_all_timestamps (persistence_agent_t *agent, const struct p
     }
 
     // print the paylaod id to file
-    if (fprintf (agent->data->file, "%d: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]) < 0)
+    if (fprintf (agent->data->file, "%llu: %llu %llu %llu %llu\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3]) < 0)
     {
         LOG (stderr, "ERROR: Could not write to persistence file\n");
         return -1;
@@ -152,12 +152,12 @@ int persistence_close_min_max (persistence_agent_t *agent)
     if (aux->min != UINT64_MAX)
     {
         struct pingpong_payload *payload = &aux->min_payload;
-        fprintf (agent->data->file, "%d: %llu %llu %llu %llu (LATENCY %lu ns)\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3], aux->min);
+        fprintf (agent->data->file, "%llu: %llu %llu %llu %llu (LATENCY %lu ns)\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3], aux->min);
     }
     if (aux->max != 0)
     {
         struct pingpong_payload *payload = &aux->max_payload;
-        fprintf (agent->data->file, "%d: %llu %llu %llu %llu (LATENCY %lu ns)\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3], aux->max);
+        fprintf (agent->data->file, "%llu: %llu %llu %llu %llu (LATENCY %lu ns)\n", payload->id, payload->ts[0], payload->ts[1], payload->ts[2], payload->ts[3], aux->max);
     }
 
     free (aux);

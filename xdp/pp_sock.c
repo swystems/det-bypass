@@ -53,12 +53,12 @@ __attribute_maybe_unused__ static const char *outfile = "pingpong_xsk.dat";
 static persistence_agent_t *persistence_agent;
 
 struct config {
-    __u32 xdp_flags;
+    uint32_t xdp_flags;
     int ifindex;
     char *ifname;
     uint64_t iters;   // number of pingpong packet exchanges
     uint64_t interval;// interval between two pingpong packet exchanges
-    __u16 xsk_bind_flags;
+    uint16_t xsk_bind_flags;
     int xsk_if_queue;
     bool xsk_poll_mode;
 };
@@ -505,7 +505,7 @@ static void rx_and_process (struct config *cfg,
  * @param aux the socket information structure.
  * @return 0 if the packet was successfully sent, -1 otherwise.
  */
-int client_send_pp_packet (char *buf, const int packet_id, struct sockaddr_ll *addr __unused, void *aux)
+int client_send_pp_packet (char *buf, const uint64_t packet_id, struct sockaddr_ll *addr __unused, void *aux)
 {
     struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
     ip->id = htons (packet_id);

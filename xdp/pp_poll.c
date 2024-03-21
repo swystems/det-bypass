@@ -40,7 +40,7 @@ inline uint32_t poll_next_payload (void *map_ptr, struct pingpong_payload *dest_
 
     BUSY_WAIT (!valid_pingpong_payload (map));
     *dest_payload = *map;
-    memset ((void *) map, 0, sizeof (struct pingpong_payload));
+    map->magic = 0;
 
     return (next_index + 1) % PACKETS_MAP_SIZE;
 }
@@ -96,7 +96,7 @@ void *dump_map (void *aux)
 
 int sock;
 
-int send_packet (char *buf, const int packet_id, struct sockaddr_ll *sock_addr, void *aux __unused)
+int send_packet (char *buf, const uint64_t packet_id, struct sockaddr_ll *sock_addr, void *aux __unused)
 {
     struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
     ip->id = htons (packet_id);
@@ -194,7 +194,8 @@ void start_pingpong (int ifindex, const char *server_ip, const uint64_t iters, _
     // if server, wait to receive packet (phase 1), send it back (phase 2), repeat.
     printf ("\nStarting pingpong experiment... \n\n");
     fflush (stdout);
-    uint32_t current_id = 0;
+
+    uint64_t current_id = 0;
     uint32_t next_map_idx = 0;
 
 #if DUMP_MAP
@@ -225,7 +226,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint64_t iters, _
 
 #if DEBUG
         if (buf_payload->id - current_id != 1)
-            LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
+            LOG (stderr, "WARN: missed %ld packets between %lu and %llu\n", (int64_t) buf_payload->id - (int64_t) current_id - 1, current_id, buf_payload->id);
 #endif
 
         current_id = max (current_id, buf_payload->id);
@@ -258,7 +259,7 @@ void start_pingpong (int ifindex, const char *server_ip, const uint64_t iters, _
 
 #if DEBUG
         if (buf_payload->id - current_id != 1)
-            LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
+            LOG (stderr, "WARN: missed %ld packets between %lu and %llu\n", (int64_t) buf_payload->id - (int64_t) current_id - 1, current_id, buf_payload->id);
 #endif
 
         buf_payload->ts[3] = get_time_ns ();

@@ -65,7 +65,7 @@ void start_server (uint64_t iters)
     memset (&client_addr, 0, sizeof (client_addr));
 
     uint8_t recv_buf[PACKET_SIZE];
-    uint32_t last_idx = 0;
+    uint64_t last_idx = 0;
     while (last_idx < iters)
     {
         int ret = recvfrom (socket, recv_buf, PACKET_SIZE, 0, (struct sockaddr *) &client_addr, &client_addr_len);
@@ -92,7 +92,7 @@ void start_server (uint64_t iters)
     }
 }
 
-int send_single_packet (char *buf, const int packet_idx, struct sockaddr_ll *addr, void *aux)
+int send_single_packet (char *buf, const uint64_t packet_idx, struct sockaddr_ll *addr, void *aux)
 {
     int socket = *(int *) aux;
     struct pingpong_payload *payload = (struct pingpong_payload *) buf;
@@ -143,7 +143,7 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    LOG (stdout, "Starting server with iters=%u\n", iters);
+    LOG (stdout, "Starting server with iters=%lu\n", iters);
 
     start_server (iters);
 #else

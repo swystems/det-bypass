@@ -334,7 +334,7 @@ int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
     return 0;
 }
 
-int pp_send_single_packet (char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+int pp_send_single_packet (char *buf __unused, const uint64_t packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
     *ctx->send_payload = new_pingpong_payload (packet_id);
@@ -491,7 +491,7 @@ int main (int argc, char **argv)
     start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
 #endif
 
-    uint32_t recv_count, send_count;
+    uint64_t recv_count, send_count;
     recv_count = send_count = 0;
 
     while (recv_count < iters)

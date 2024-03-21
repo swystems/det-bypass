@@ -39,8 +39,8 @@
         perror (errno); \
     } while (0)
 #else
-#define LOG(stream, fmt, ...)
-#define PERROR(errno)
+#define LOG(stream, fmt, ...) do {} while (0)
+#define PERROR(errno) do {} while (0)
 #endif
 
 #define START_TIMER() uint64_t __start = get_time_ns ()
@@ -89,7 +89,7 @@
 #define PINGPONG_MAGIC 0x8badbeef
 
 struct pingpong_payload {
-    __u32 id;
+    __u64 id;
     __u32 phase;
     __u64 ts[4];
 
@@ -117,7 +117,7 @@ inline struct pingpong_payload empty_pingpong_payload ()
     return payload;
 }
 
-inline struct pingpong_payload new_pingpong_payload (__u32 id)
+inline struct pingpong_payload new_pingpong_payload (__u64 id)
 {
     struct pingpong_payload payload;
     payload.id = id;
