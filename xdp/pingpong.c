@@ -80,8 +80,12 @@ int add_packet_to_map (struct pingpong_payload *payload)
         return -1;
     }
 
-    /* For some reason, after changing `id` to __u64, the update with the pointer does not work. */
-    bpf_map_update_elem (&last_payload, &key, payload, BPF_ANY);
+    // Remove the last bit of magic, so the userspace cannot read the packet yet;
+    payload->magic = payload->magic & 0xFFFFFFFE;
+    // Write all the content of the packet.
+    *old_payload = *payload;
+    // Add the last bit of magic, so the userspace can read the packet. Sort of a "commit" operation.
+    old_payload->magic |= 1;
 
     return 0;
 }
@@ -115,7 +119,8 @@ int xdp_main (struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    if (add_packet_to_map (payload)) {
+    if (add_packet_to_map (payload))
+    {
         bpf_printk ("Could not add packet %llu to map\n", payload->id);
     }
 

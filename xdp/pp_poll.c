@@ -41,7 +41,6 @@ inline uint32_t poll_next_payload (volatile void *volatile map_ptr, struct pingp
 
     BUSY_WAIT (!valid_pingpong_payload (map) && !global_exit);
     memcpy (dest_payload, (void *) map, sizeof (struct pingpong_payload));
-    BARRIER ();
 
     memset ((void *) map, 0, sizeof (struct pingpong_payload));
 
@@ -72,7 +71,7 @@ void *dump_map (void *aux)
             }
             else
             {
-                if (map->magic == PINGPONG_MAGIC)
+                if (valid_pingpong_payload (map))
                     printf ("(%07llu)", map->id);// to be read
                 else
                     printf ("[%07llu]", map->id);
@@ -160,7 +159,7 @@ void start_client (uint64_t iters, uint64_t interval, struct sockaddr_ll *server
         if (buf_payload->phase != 2)
         {
             fprintf (stderr, "ERR: expected phase 2, got %d\n", buf_payload->phase);
-            fprintf (stderr, "Packet: %llu %llu %llu %llu %llu %u\n", buf_payload->id, buf_payload->ts[0], buf_payload->ts[1], buf_payload->ts[2], buf_payload->ts[3], buf_payload->magic);
+            fprintf (stderr, "Packet: %llu %llu %llu %llu %llu\n", buf_payload->id, buf_payload->ts[0], buf_payload->ts[1], buf_payload->ts[2], buf_payload->ts[3]);
             continue;
         }
 

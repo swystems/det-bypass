@@ -1,6 +1,7 @@
 .idea
 .env
 .ipynb_checkpoints
+.*
 
 build/
 *.o
