@@ -67,6 +67,7 @@ struct bucket {
 };
 
 struct bucket_data {
+    uint64_t tot_packets;
     uint64_t send_interval;
     struct bucket min_values;
     struct bucket max_values;

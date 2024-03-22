@@ -85,6 +85,13 @@ int persistence_write_buckets (persistence_agent_t *agent, const struct pingpong
         return -1;
     }
 
+    if (UNLIKELY (payload->id % 1000000 == 0))
+    {
+        fprintf (stdout, "%llu\n", payload->id);
+    }
+
+    aux->tot_packets++;
+
     uint64_t ts_diff[4];
     for (int i = 0; i < 4; i++)
     {
@@ -175,6 +182,7 @@ int persistence_close_buckets (persistence_agent_t *agent)
     const uint64_t rel_bucket_size = (rel_max - rel_min) / NUM_BUCKETS;
     const uint64_t abs_bucket_size = (abs_max - abs_min) / NUM_BUCKETS;
 
+    fprintf (agent->data->file, "TOT %lu\n", aux->tot_packets);
     fprintf (agent->data->file, "REL %lu %lu %lu\n", rel_min, rel_max, rel_bucket_size);
     fprintf (agent->data->file, "ABS %lu %lu %lu\n", abs_min, abs_max, abs_bucket_size);
 
@@ -234,6 +242,7 @@ int persistence_init_buckets (persistence_agent_t *agent, void *init_aux)
         return -1;
     }
     mlock (aux, sizeof (struct bucket_data));
+    aux->tot_packets = 0;
     aux->send_interval = interval;
 
     for (size_t i = 0; i < 4; ++i)
