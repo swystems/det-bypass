@@ -3,11 +3,9 @@
 #include "../common/persistence.h"
 #include "src/args.h"
 #include <arpa/inet.h>
-#include <getopt.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -15,6 +13,8 @@
 #define PINGPONG_UDP_PORT 12345
 
 persistence_agent_t *persistence_agent;
+
+static volatile bool global_exit = false;
 
 int new_socket (void)
 {
@@ -66,7 +66,7 @@ void start_server (uint64_t iters)
 
     uint8_t recv_buf[PACKET_SIZE];
     uint64_t last_idx = 0;
-    while (last_idx < iters)
+    while (last_idx < iters && !global_exit)
     {
         int ret = recvfrom (socket, recv_buf, PACKET_SIZE, 0, (struct sockaddr *) &client_addr, &client_addr_len);
         uint64_t ts = get_time_ns ();
@@ -113,7 +113,7 @@ void start_client (uint64_t iters, uint64_t interval, const char *server_ip)
 
     uint8_t recv_buf[PACKET_SIZE];
     uint32_t last_idx = 0;
-    while (last_idx < iters)
+    while (last_idx < iters && !global_exit)
     {
         int ret = recvfrom (socket, recv_buf, PACKET_SIZE, 0, NULL, NULL);
         if (ret < 0)
@@ -133,8 +133,14 @@ void start_client (uint64_t iters, uint64_t interval, const char *server_ip)
     persistence_agent->close (persistence_agent);
 }
 
+void sigint_handler (int signum __unused)
+{
+    global_exit = true;
+}
+
 int main (int argc, char **argv)
 {
+    signal (SIGINT, sigint_handler);
 #if SERVER
     uint64_t iters = 0;
     if (!nobypass_parse_args (argc, argv, &iters))

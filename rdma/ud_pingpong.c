@@ -1,6 +1,6 @@
 // Require information: Device name, Port GID Index, Server IP
 #include <malloc.h>
-#include <stdatomic.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +12,6 @@
 #include "../common/common.h"
 #include "../common/net.h"
 #include "../common/persistence.h"
-//#include "ccan/minmax.h"
 #include "src/args.h"
 #include "src/ib_net.h"
 #include "src/pingpong.h"
@@ -27,6 +26,8 @@
 #define PRIORITY 0
 
 persistence_agent_t *persistence_agent;
+
+static volatile bool global_exit = false;
 
 /**
  * Work Request IDs.
@@ -442,6 +443,11 @@ int pp_send_single_packet (char *buf __unused, const uint64_t packet_id, struct 
     return pp_post_send (ctx, (uintptr_t) ctx->send_buf, ctx->send_mr->lkey, -1);
 }
 
+void sigint_handler (int sig __unused)
+{
+    global_exit = true;
+}
+
 int main (int argc, char **argv)
 {
     char *ib_devname = NULL;
@@ -526,12 +532,14 @@ int main (int argc, char **argv)
         }
     }
 
+    signal (SIGINT, sigint_handler);
+
 #if !SERVER
     start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
 #endif
 
     uint64_t recv_idx = 0;
-    while (LIKELY (recv_idx < iters))
+    while (LIKELY (recv_idx < iters && !global_exit))
     {
         struct ibv_wc wc[2];
         int ne;
@@ -544,7 +552,10 @@ int main (int argc, char **argv)
                 fprintf (stderr, "Poll CQ failed %d\n", ne);
                 return 1;
             }
-        } while (!ne);
+        } while (!ne && !global_exit);
+
+        if (UNLIKELY (global_exit))
+            break;
 
         for (int i = 0; i < ne; ++i)
         {
