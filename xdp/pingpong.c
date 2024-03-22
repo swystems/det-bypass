@@ -73,13 +73,15 @@ int add_packet_to_map (struct pingpong_payload *payload)
          *
          * TODO: Fix the data race in the reset of the index
          */
+        bpf_printk ("Map is full. Dropping packet at index: %D\n", key);
         bpf_spin_lock (&lock->value);
         lock->index = key;
         bpf_spin_unlock (&lock->value);
         return -1;
     }
 
-    *old_payload = *payload;
+    /* For some reason, after changing `id` to __u64, the update with the pointer does not work. */
+    bpf_map_update_elem (&last_payload, &key, payload, BPF_ANY);
 
     return 0;
 }
@@ -113,7 +115,9 @@ int xdp_main (struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    add_packet_to_map (payload);
+    if (add_packet_to_map (payload)) {
+        bpf_printk ("Could not add packet %llu to map\n", payload->id);
+    }
 
     return XDP_DROP;
 }

@@ -39,8 +39,8 @@
         perror (errno); \
     } while (0)
 #else
-#define LOG(stream, fmt, ...) do {} while (0)
-#define PERROR(errno) do {} while (0)
+#define LOG(stream, fmt, ...)
+#define PERROR(errno)
 #endif
 
 #define START_TIMER() uint64_t __start = get_time_ns ()
@@ -88,11 +88,13 @@
 // Random magic number for pingpong packets
 #define PINGPONG_MAGIC 0x8badbeef
 
+
+#pragma pack (push, 1)
 struct pingpong_payload {
     __u64 id;
-    __u32 phase;
     __u64 ts[4];
 
+    __u32 phase;
     /**
      * In an unsynchronized XDP-userspace polling communication, there is the possibility of a corruption of packets in the case of XDP writing the same space in memory that userspace is reading.
      * To address this issue, a "magic number" was added at the end of the pingpong payload, which helps recognize the integrity of the packet without need of any checksum: before reading a packets from the map,
@@ -102,6 +104,7 @@ struct pingpong_payload {
      */
     __u32 magic;
 };
+#pragma pack (pop)
 
 inline struct pingpong_payload empty_pingpong_payload ()
 {
@@ -140,7 +143,7 @@ inline struct pingpong_payload new_pingpong_payload (__u64 id)
  */
 inline __u32 valid_pingpong_payload (const volatile struct pingpong_payload *volatile payload)
 {
-    return payload->magic == PINGPONG_MAGIC;
+    return payload->id != 0 && payload->ts[0] != 0 && payload->magic == PINGPONG_MAGIC;
 }
 
 inline __u64 compute_latency (const struct pingpong_payload *payload)

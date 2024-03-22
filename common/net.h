@@ -81,7 +81,9 @@ typedef int (*send_packet_t) (char *, uint64_t, struct sockaddr_ll *, void *);
  */
 int start_sending_packets (uint64_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux);
 
+#if !SERVER
 pthread_t get_sender_thread (void);
+#endif
 
 /**
  * Retrieve the local interface MAC address.

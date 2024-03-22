@@ -247,7 +247,7 @@ struct sockaddr_ll build_sockaddr (int ifindex, const unsigned char *dest_mac)
 
 inline int send_pingpong_packet (int sock, const char *restrict buf, struct sockaddr_ll *restrict sock_addr)
 {
-    return sendto (sock, buf, PACKET_SIZE, MSG_DONTWAIT, (struct sockaddr *) sock_addr, sizeof (struct sockaddr_ll));
+    return sendto (sock, buf, PACKET_SIZE, 0, (struct sockaddr *) sock_addr, sizeof (struct sockaddr_ll));
 }
 
 struct sender_data {
