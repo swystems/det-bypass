@@ -562,14 +562,14 @@ int main (int argc, char **argv)
             if (UNLIKELY (parse_single_wc (ctx, wc[i])))
             {
                 fprintf (stderr, "Couldn't parse WC\n");
-                return 1;
+                goto done;
             }
 
             if (wc[i].wr_id >= PINGPONG_RECV_WRID)
                 recv_idx = max (recv_idx, ctx->recv_payloads[wc[i].wr_id - PINGPONG_RECV_WRID]->id);
         }
     }
-
+done:
     LOG (stdout, "Received all packets\n");
 
     if (persistence_agent)

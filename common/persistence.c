@@ -95,6 +95,11 @@ int persistence_write_buckets (persistence_agent_t *agent, const struct pingpong
     uint64_t ts_diff[4];
     for (int i = 0; i < 4; i++)
     {
+        if (UNLIKELY (payload->ts[i] < aux->prev_payload.ts[i]))
+        {
+            LOG (stderr, "ERROR: Timestamps are not monotonically increasing\n");
+            return -1;
+        }
         ts_diff[i] = payload->ts[i] - aux->prev_payload.ts[i];
     }
 

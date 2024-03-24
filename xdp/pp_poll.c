@@ -189,9 +189,6 @@ void start_client (uint64_t iters, uint64_t interval, struct sockaddr_ll *server
 #endif
 
     munmap (map_ptr, sizeof (struct pingpong_payload) * PACKETS_MAP_SIZE);
-
-    if (persistence)
-        persistence->close (persistence);
 }
 #endif
 
@@ -412,5 +409,11 @@ int main (int argc, char **argv)
     }
 
     start_pingpong (ifindex, server_ip, iters, interval);
+
+#if !SERVER
+    if (persistence)
+        persistence->close (persistence);
+#endif
+
     return EXIT_SUCCESS;
 }

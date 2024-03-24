@@ -119,7 +119,7 @@ void start_client (uint64_t iters, uint64_t interval, const char *server_ip)
         if (ret < 0)
         {
             PERROR ("recv");
-            return;
+            break;
         }
 
         struct pingpong_payload *payload = (struct pingpong_payload *) recv_buf;
@@ -130,7 +130,6 @@ void start_client (uint64_t iters, uint64_t interval, const char *server_ip)
     }
 
     close (socket);
-    persistence_agent->close (persistence_agent);
 }
 
 void sigint_handler (int signum __unused)
@@ -174,6 +173,7 @@ int main (int argc, char **argv)
     LOG (stdout, "Starting client with iters=%lu, interval=%lu, server_ip=%s\n", iters, interval, server_ip);
 
     start_client (iters, interval, server_ip);
+    persistence_agent->close (persistence_agent);
 #endif
 
     return EXIT_SUCCESS;
