@@ -1,0 +1,59 @@
+---
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Create output directory
+      file:
+        path: "{{ output_dir }}"
+        state: directory
+        mode: 0755
+
+- hosts: poll_tx
+  gather_facts: no
+  tasks:
+    - name: Collect XDP poll results
+      become: yes
+      synchronize:
+        src: "{{ base_dir }}/build/xdp/pingpong.dat"
+        dest: "{{ output_dir }}/xdp/"
+        mode: pull
+
+- hosts: xsk_tx
+  gather_facts: no
+  tasks:
+    - name: Collect XSK results
+      become: yes
+      synchronize:
+        src: "{{ base_dir }}/build/xdp/pingpong_xsk.dat"
+        dest: "{{ output_dir }}/xdp/"
+        mode: pull
+
+- hosts: rdma_tx
+  gather_facts: no
+  tasks:
+    - name: Collect RDMA results
+      become: yes
+      synchronize:
+        src: "{{ base_dir }}/build/rdma/ud.dat"
+        dest: "{{ output_dir }}/rdma/"
+        mode: pull
+
+- hosts: noby_tx
+  gather_facts: no
+  tasks:
+    - name: Collect no-bypass results
+      become: yes
+      synchronize:
+        src: "{{ base_dir }}/build/no-bypass/no-bypass.dat"
+        dest: "{{ output_dir }}/no-bypass/"
+        mode: pull
+
+- hosts: xdp_tx
+  gather_facts: no
+  tasks:
+    - name: Collect XDP Pure results
+      become: yes
+      synchronize:
+        src: "{{ base_dir }}/build/xdp/pingpong_pure.dat"
+        dest: "{{ output_dir }}/xdp/"
+        mode: pull

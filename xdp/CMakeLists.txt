@@ -23,7 +23,7 @@ endfunction()
 
 add_xdp_hook(pingpong)
 add_xdp_hook(pingpong_xsk)
-#add_xdp_hook(pingpong_pure)
+add_xdp_hook(pingpong_pure)
 
 link_libraries(bpf xdp)
 
@@ -33,5 +33,5 @@ add_dependencies(pp_poll pingpong)
 add_executable(pp_sock ${SOURCES} pp_sock.c)
 add_dependencies(pp_sock pingpong_xsk)
 
-#add_executable(pp_pure ${SOURCES} pp_pure.c)
-#add_dependencies(pp_pure pingpong_pure)
+add_executable(pp_pure ${SOURCES} pp_pure.c)
+add_dependencies(pp_pure pingpong_pure)

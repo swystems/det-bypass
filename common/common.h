@@ -81,6 +81,9 @@
 // Custom ethernet protocol number
 #define ETH_P_PINGPONG 0x2002
 
+// UDP port used for the pingpong communication in pp_pure.c
+#define XDP_UDP_PORT 1234
+
 // Size of the map used to exchange the pingpong packets
 // The bigger, the slower the polling but the less likely to lose packets
 #define PACKETS_MAP_SIZE 128
@@ -143,7 +146,7 @@ inline struct pingpong_payload new_pingpong_payload (__u64 id)
  */
 inline __u32 valid_pingpong_payload (const volatile struct pingpong_payload *volatile payload)
 {
-    return payload->id != 0 && payload->ts[0] != 0 && payload->magic == PINGPONG_MAGIC;
+    return payload->magic == PINGPONG_MAGIC;
 }
 
 inline __u64 compute_latency (const struct pingpong_payload *payload)

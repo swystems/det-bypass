@@ -22,6 +22,14 @@
 int setup_socket (void);
 
 /**
+ * Convert a string IP address to a uint32_t.
+ * @param ip the string IP address
+ * @param ip_addr the output buffer to write the IP address to
+ * @return 0 on success, -1 on failure
+ */
+int convert_ip (const char *ip, uint32_t *ip_addr);
+
+/**
  * Construct the base structure of the packet inside buf by writing the ethernet and ip headers
  * to the given buffer.
  *

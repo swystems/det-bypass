@@ -4,6 +4,12 @@
   gather_subset:
     - "!all"
   tasks:
+    - name: Clean build directory
+      shell: |
+        cd {{ base_dir }}
+        rm -rf build
+      when: clean_build | default(false)
+
     - name: Build pingpong programs
       shell: |
         cd {{ base_dir }}
