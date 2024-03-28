@@ -25,6 +25,10 @@
           - clang
           - git
 
+    - name: Setup host isolation
+      import_tasks: ./isolation.yaml
+      when: isolate | default(0)
+
     - name: Setup kernel parameters
       block:
         - name: Modify GRUB file

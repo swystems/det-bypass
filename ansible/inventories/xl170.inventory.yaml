@@ -15,12 +15,6 @@ all:
         - rocep3s0f1
       ip: "10.10.1.1"
 
-  vars:
-    ansible_user: mdr
-    isolated_cores: "11,12"
-    cpu_freq: 2400000000 # 2.4 GHz
-    base_dir: "/users/{{ ansible_user }}/det-bypass"
-
 tx_nodes:
   hosts:
     xdp1
