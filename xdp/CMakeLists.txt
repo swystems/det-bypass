@@ -27,6 +27,7 @@ add_xdp_hook(pingpong_pure)
 
 link_libraries(bpf xdp)
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pg")
 add_executable(pp_poll ${SOURCES} pp_poll.c)
 add_dependencies(pp_poll pingpong)
 
