@@ -16,7 +16,7 @@ static const char *prog_name = "xdp_main";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong";
 static const char *mapname = "last_payload";
 
-__attribute_maybe_unused__ static const char *outfile = "pingpong.dat";
+static const char *outfile = "pingpong.dat";
 
 volatile bool global_exit;
 
@@ -277,7 +277,7 @@ void start_server (const uint64_t iters, char *buf, struct sockaddr_ll *client_a
  * @param iters the number of packets to send
  * @param interval only for the client, the interval between packets
  */
-void start_pingpong (int ifindex, const char *server_ip, const uint64_t iters, __attribute_maybe_unused__ const uint32_t interval)
+void start_pingpong (int ifindex, const char *server_ip, const uint64_t iters, const uint32_t interval)
 {
     uint8_t src_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint8_t dest_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};

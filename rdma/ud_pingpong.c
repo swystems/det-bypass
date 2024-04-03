@@ -326,7 +326,7 @@ int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey,
 
 int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc)
 {
-    __attribute_maybe_unused__ const uint64_t ts = get_time_ns ();
+    const uint64_t ts = get_time_ns ();
     if (wc.status != IBV_WC_SUCCESS)
     {
         LOG (stderr, "Failed status %s (%d) for wr_id %d\n", ibv_wc_status_str (wc.status), wc.status, (int) wc.wr_id);

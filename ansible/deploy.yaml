@@ -9,6 +9,6 @@
         dest: "{{ base_dir }}"
         rsync_opts:
           - "--exclude=.*"
-          - "--exclude=analysis/"
+          # - "--exclude=analysis/"
           - "--exclude=ansible/"
           - "--chown={{ ansible_user }}:{{ ansible_user }}"

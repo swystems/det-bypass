@@ -50,7 +50,7 @@ static const char *sec_name = "xdp";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong_xsk";
 static const char *mapname = "xsk_map";
 
-__attribute_maybe_unused__ static const char *outfile = "pingpong_xsk.dat";
+static const char *outfile = "pingpong_xsk.dat";
 static persistence_agent_t *persistence_agent;
 
 struct config {

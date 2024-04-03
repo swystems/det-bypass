@@ -371,7 +371,7 @@ int parse_single_wc (struct pingpong_context *ctx)
 {
     const enum ibv_wc_status status = ctx->cq->status;
     const uint64_t wr_id = ctx->cq->wr_id;
-    __attribute_maybe_unused__ const uint64_t ts = ibv_wc_read_completion_ts (ctx->cq);
+    const uint64_t ts = ibv_wc_read_completion_ts (ctx->cq);
 
     if (status != IBV_WC_SUCCESS)
     {
