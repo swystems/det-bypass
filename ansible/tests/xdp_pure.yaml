@@ -1,5 +1,7 @@
 ---
 - hosts: xdp_rx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
   gather_facts: no
   tasks:
     - import_tasks: tasks/run_server.yaml
@@ -10,6 +12,8 @@
         devices: "{{ devs }}"
 
 - hosts: xdp_tx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
   gather_facts: no
   tasks:
     - import_tasks: tasks/run_client.yaml

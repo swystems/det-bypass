@@ -1,0 +1,14 @@
+---
+- name: "Check if {{ prog_title }} is running"
+  shell: "ps -C {{ prog_name }} -o pid="
+  register: pgrep
+  ignore_errors: true
+
+- fail:
+    msg: "{{ prog_title }} is not running"
+  ignore_errors: true
+  when: pgrep.stdout == ""
+
+- debug:
+    msg: "{{ prog_title }} is running; PID: {{ pgrep.stdout }}"
+  when: pgrep.stdout != ""

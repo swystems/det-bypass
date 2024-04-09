@@ -1,5 +1,7 @@
 ---
 - hosts: poll_rx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
   gather_facts: no
   tasks:
     - import_tasks: tasks/run_server.yaml
@@ -11,6 +13,8 @@
 
 - hosts: poll_tx
   gather_facts: no
+  vars_files:
+    - ../inventories/group_vars/all.yaml
   tasks:
     - import_tasks: tasks/run_client.yaml
       vars:

@@ -12,6 +12,10 @@
   shell: |
     pkill -f {{ prog_name }} || true
   ignore_errors: yes
+
+- debug:
+    var: execute_command
+
 - name: "Run {{ prog_title }} (Client)"
   become: yes
   shell: |

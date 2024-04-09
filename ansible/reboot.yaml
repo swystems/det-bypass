@@ -4,3 +4,7 @@
   tasks:
     - name: Reboot
       reboot:
+
+- name: Re-run isolation
+  import_playbook: isolation.yaml
+  when: run_isolated

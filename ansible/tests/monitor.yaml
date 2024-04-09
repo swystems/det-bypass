@@ -1,0 +1,40 @@
+---
+- hosts: poll_tx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  gather_facts: no
+  tasks:
+    - import_tasks: tasks/check.yaml
+      vars:
+        prog_title: "XDP Poll"
+        prog_name: "pp_poll"
+
+- hosts: xsk_tx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  gather_facts: no
+  tasks:
+    - import_tasks: tasks/check.yaml
+      vars:
+        prog_title: "AF_XDP"
+        prog_name: "pp_sock"
+
+- hosts: noby_tx
+  gather_facts: no
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  tasks:
+    - import_tasks: tasks/check.yaml
+      vars:
+        prog_title: "No Bypass"
+        prog_name: "no-bypass"
+
+- hosts: rdma_tx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  gather_facts: no
+  tasks:
+    - import_tasks: tasks/check.yaml
+      vars:
+        prog_title: "RDMA UD"
+        prog_name: "ud_pingpong"

@@ -71,22 +71,6 @@ all:
         - rocep3s0f1
       ip: "10.10.1.2"
 
-tx_nodes:
-  hosts:
-    poll1:
-    xsk1:
-    rdma1:
-    noby1:
-    xdp1:
-
-rx_nodes:
-  hosts:
-    poll2:
-    xsk2:
-    rdma2:
-    noby2:
-    xdp2:
-
 poll_tx:
   hosts:
     poll1:

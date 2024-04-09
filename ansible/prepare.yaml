@@ -24,24 +24,7 @@
           - cmake
           - clang
           - git
-
-    - name: Setup host isolation
-      import_tasks: ./isolation.yaml
-      when: isolate | default(0)
-
-    - name: Setup kernel parameters
-      block:
-        - name: Modify GRUB file
-          become: yes
-          lineinfile:
-            path: /etc/default/grub
-            regexp: '^GRUB_CMDLINE_LINUX='
-            line: 'GRUB_CMDLINE_LINUX="isolcpus={{isolated_cores}} nohz_full={{isolated_cores}} rcu_nocbs={{isolated_cores}} default_hugepagesz=1G hugepagesz=1G hugepages=8 iommu=pt intel_iommu=on"'
-            state: present
-        - name: Update grub
-          become: yes
-          shell: |
-            update-grub2
+          - tuned
 
     - name: Update kernel to {{ kernel_version }}
       block:
