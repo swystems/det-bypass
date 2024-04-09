@@ -58,8 +58,8 @@ struct min_max_latency_data {
 };
 
 /* Range in nanoseconds of each bucket */
-#define NUM_BUCKETS 10000
-#define OFFSET 500000
+#define NUM_BUCKETS 20000
+#define OFFSET 1000000
 
 struct bucket {
     uint64_t rel_latency[4];

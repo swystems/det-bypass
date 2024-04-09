@@ -79,6 +79,9 @@ int persistence_write_min_max_latency (persistence_agent_t *agent, const struct 
 int persistence_write_buckets (persistence_agent_t *agent, const struct pingpong_payload *payload)
 {
     struct bucket_data *aux = agent->data->aux;
+
+    aux->tot_packets++;
+
     if (!valid_pingpong_payload (&aux->prev_payload))
     {
         aux->prev_payload = *payload;
@@ -88,9 +91,8 @@ int persistence_write_buckets (persistence_agent_t *agent, const struct pingpong
     if (UNLIKELY (payload->id % 1000000 == 0))
     {
         fprintf (stdout, "%llu\n", payload->id);
+        fflush (stdout);
     }
-
-    aux->tot_packets++;
 
     uint64_t ts_diff[4];
     for (int i = 0; i < 4; i++)

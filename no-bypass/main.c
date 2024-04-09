@@ -10,8 +10,6 @@
 #include <string.h>
 #include <sys/socket.h>
 
-#define PINGPONG_UDP_PORT 12345
-
 persistence_agent_t *persistence_agent;
 
 static volatile bool global_exit = false;
@@ -50,7 +48,7 @@ void start_server (uint64_t iters)
     struct sockaddr_in server_addr;
     memset (&server_addr, 0, sizeof (server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons (PINGPONG_UDP_PORT);
+    server_addr.sin_port = htons (XDP_UDP_PORT);
     server_addr.sin_addr.s_addr = htonl (INADDR_ANY);
 
     int ret = bind (socket, (struct sockaddr *) &server_addr, sizeof (server_addr));
@@ -105,7 +103,7 @@ int send_single_packet (char *buf, const uint64_t packet_idx, struct sockaddr_ll
 void start_client (uint64_t iters, uint64_t interval, const char *server_ip)
 {
     int socket = new_socket ();
-    struct sockaddr_in server_addr = new_sockaddr (server_ip, PINGPONG_UDP_PORT);
+    struct sockaddr_in server_addr = new_sockaddr (server_ip, XDP_UDP_PORT);
     uint8_t send_buf[PACKET_SIZE];
     memset (send_buf, 0, PACKET_SIZE);
     // passing a ref to the local socket should work fine since the current function will not return until the pingpong is finished.
