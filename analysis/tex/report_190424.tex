@@ -1,0 +1,110 @@
+\documentclass{article}
+\usepackage[a4paper, total={6in, 8in}]{geometry}
+
+\begin{document}
+
+\date{04/2024}
+
+\title{\Large \bf Report: communcation jitter analysis, periodic peaks}
+
+\author{Davide Rovelli, Michele Dalle Rive}
+\maketitle
+
+\section*{Objective}
+We analyse the latency disitribution in the communication between 2 bare-metal 
+nodes in a datacenter. The objective of our experiments is to make packet 
+processing latency of Linux-based hosts with modern NICs as \textit{deterministic}
+as possible. This consists in reducing communication jitter to a minimum, where
+$jitter = \max(latency) - \min(latency)$.
+
+Contrarily to usual low tail-latency experiments/systems which aim to reduce the
+common-case latency up to some percentile (e.g.$99.5\%, 99.9\%$) we want to minimise 
+the $100\%$ latency, even at the cost of (non-substantially) increasing the 
+common-case. 
+
+\section*{Methodology}
+
+\subsection*{Benchmark}
+We run ping-pong tests across 2 hosts \textbf{A} and \textbf{B} by sending packets
+at a fixed sending rate. Each packet carries a packet ID and 4 timestamps:
+
+\begin{itemize}
+  \itemsep=-0.8mm
+  \item $ts_1$: timestamp just before sending the PING message in host \textbf{A}
+  \item $ts_2$: timestamp as soon as the process in host \textbf{B} receives the
+  PING packet.
+  \item $ts_3$: timestamp just before sending the PONG message in host \textbf{B}
+  \item $ts_4$: timestamp as soon as the process in host \textbf{A} receives the
+  PONG packet.
+\end{itemize}
+
+We then calculate the difference between timestamps of successive packets
+to get the variations in latency. For example, $ts_1(33) - ts_1(32)$ where 33 and
+32 are the packet IDs, represents the time interval between the PING send timestamp
+of packet 32 and the PING send timestamp of packet 33. If there's no jitter,
+it should be equal to the sending rate. The difference between $ts_1(33) - ts_1(32)$
+and the sending rate represents the jitter for that pair. 
+
+\subsection*{Hardware setup}
+We use 3 different bare-metal clusters with the following configurations:
+
+\paragraph{Cluster A} 2x CloudLab xl170 nodes
+
+\begin{itemize}
+  \itemsep=-0.8mm
+  \item CPU:  Intel Xeon E5-2640 v4 at 2.40GHz, 10 cores, 64GB RAM
+  \item OS/kernel: Ubuntu 22.04.4 LTS / 6.6.19-060619-generic x86\_64
+  \item NIC/driver: Mellanox Connect-X 4 / mlx5 
+\end{itemize}
+
+\paragraph{Cluster B} 2x internal cluster nodes: 
+
+\begin{itemize}
+  \itemsep=-0.8mm
+  \item CPU:  Intel Xeon E5-2680 v4 at 2.40GHz , 28 cores, 64GB RAM
+  \item OS/kernel: Ubuntu 22.04.4 LTS / 6.6.19-060619-generic x86\_64
+  \item NIC/driver: Mellanox Connect-X 4 / mlx5 
+\end{itemize}
+
+
+Nodes are connected over ethernet, via a TOR switch with zero or minimal network load in order 
+to only observe the endhost processing overhead.
+
+\subsection*{Software setup}
+We use different \textit{kernel bypass} methods in order to minimize the 
+well-known overhead introduced by the classical network stack in Linux machines.
+We test the following: 
+
+\begin{itemize}
+  \vspace{-0.8mm}
+  \itemsep=-0.4mm
+  \item RoCE, specifically double-sided SEND/RECV RDMA with the Unreliable Datagram (UD) 
+  transport type
+  \item eBPF XDP in two different modalities:
+  \vspace{-1.8mm}
+  \begin{itemize}
+    \itemsep=-0.5mm
+    \item XDP-poll: packet is stored in a BPF map and polled by the application
+    thread
+    \item AF\_XDP: XDP socket type which handles TX and RX buffer management to 
+    the application
+  \end{itemize}
+    \item Standard network stack over UDP    
+\end{itemize}
+
+\noindent
+Packet size: \textit{1024 bytes}
+
+
+\section*{Analysis of periodic outliers}
+Here we show some of the results which include interestingly periodic latency 
+outliers, which we refer to as ``peaks''. The objective of this analysis is finding
+the root causes of such spikes and possibly eliminating them.
+
+\subsection*{Arrow-like peaks: interrupt coalescence}
+
+
+\subsection*{Long time-bound peaks}
+
+
+\end{document}

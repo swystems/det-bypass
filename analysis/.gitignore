@@ -4,3 +4,10 @@ data.tar.gz
 data.zip
 long_data.zip
 long_data
+
+# latex build files
+*.aux
+*latexmk
+*.fls
+*.log
+*.synctex.gz
