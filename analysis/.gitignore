@@ -1,9 +1,14 @@
-.ipynb_checkpoints
+# data (size too large for GH)
 data
 data.tar.gz
 data.zip
 long_data.zip
 long_data
+data-0424
+
+# py & jupyter related
+.ipynb_checkpoints
+__pycache__
 
 # latex build files
 *.aux

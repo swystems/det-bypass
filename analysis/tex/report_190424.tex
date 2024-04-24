@@ -43,7 +43,7 @@ to get the variations in latency. For example, $ts_1(33) - ts_1(32)$ where 33 an
 32 are the packet IDs, represents the time interval between the PING send timestamp
 of packet 32 and the PING send timestamp of packet 33. If there's no jitter,
 it should be equal to the sending rate. The difference between $ts_1(33) - ts_1(32)$
-and the sending rate represents the jitter for that pair. 
+and the sending rate represents the relative jitter for that pair. 
 
 \subsection*{Hardware setup}
 We use 3 different bare-metal clusters with the following configurations:
@@ -101,8 +101,10 @@ Here we show some of the results which include interestingly periodic latency
 outliers, which we refer to as ``peaks''. The objective of this analysis is finding
 the root causes of such spikes and possibly eliminating them.
 
-\subsection*{Arrow-like peaks: interrupt coalescence}
+\subsection*{``Arrow-like'' peaks: interrupt coalescence}
 
+\subsection*{Static offset peaks}
+In all experiments and all technologies we observe periodic peaks at an offset
 
 \subsection*{Long time-bound peaks}
 

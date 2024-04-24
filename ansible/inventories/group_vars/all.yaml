@@ -1,6 +1,6 @@
 ---
-ansible_user: mdr
-base_dir: "/users/mdr/det-bypass"
+ansible_user: dvr0
+base_dir: "/users/dvr0/det-bypass"
 isolated_cores_list:
   - 0
   - 1
