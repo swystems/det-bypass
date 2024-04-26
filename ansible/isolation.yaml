@@ -5,12 +5,12 @@
   tasks:
     - name: Setup kernel parameters
       become: yes
-      lineinfile:
+      replace:
         path: /etc/default/grub
         regexp: '^GRUB_CMDLINE_LINUX="(.*)"'
-        line: 'GRUB_CMDLINE_LINUX="{{boot_params}}"'
+        replace: 'GRUB_CMDLINE_LINUX="{{boot_params}}"'
         backup: true
-        backrefs: true
+        # backrefs: true
       vars:
         boot_params: "isolcpus={{isolated_cores}} nohz_full={{isolated_cores}} intel_pstate=disable intel_idle.max_cstate=0 processor.max_cstate=0 idle=poll default_hugepagesz=1G hugepagesz=1G hugepages=8"
       notify:
@@ -29,7 +29,8 @@
             enabled: no
         - name: Route away IRQs from isolated cores
           shell: |
-            echo 0-{{ (isolated_cores_list | first | int) - 1 }},{{ (isolated_cores_list | last | int) + 1 }}-$(($(nproc) - 1 + {{ (isolated_cores_list | length) }})) > /proc/irq/*/smp_affinity_list
+            # echo 0-{{ (isolated_cores_list | first | int) - 1 }},{{ (isolated_cores_list | last | int) + 1 }}-$(($(nproc) - 1 + {{ (isolated_cores_list | length) }})) > /proc/irq/*/smp_affinity_list
+            echo {{non_isolated_cores}} > /proc/irq/*/smp_affinity_list
           args:
             executable: /bin/zsh
         - name: Set CPU max performance
