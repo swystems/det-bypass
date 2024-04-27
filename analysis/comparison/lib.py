@@ -160,7 +160,7 @@ def plot_latencies(*args, iters=0):
 def plot_diffs(diffs: np.ndarray, iters=0, with_peaks=True, peaks_threshold=0):
     fig, axs = plt.subplots(2, 2, figsize=(12, 6), layout="constrained")
     fig.get_layout_engine().set(w_pad=0.15, h_pad=0.15, hspace=0, wspace=0)
-    fig.suptitle("Timestamp difference between consequent packets")
+    #fig.suptitle("Timestamp difference between consequent packets")
 
     peaks = None
     if with_peaks:
@@ -175,6 +175,8 @@ def plot_diffs(diffs: np.ndarray, iters=0, with_peaks=True, peaks_threshold=0):
         ax.scatter(x=diffs[:, 0], y=diffs[:, i + 1], s=1)
         if with_peaks and i > 0 and len(peaks[i - 1]) > 0:
             ax.scatter(x=diffs[peaks[i - 1], 0], y=diffs[peaks[i - 1], i + 1], s=1, c="red")
+
+    return fig
 
 def plot_buckets(buckets: np.ndarray, info: BucketsInfo, send_rate: int = 0, suptitle: str = "", titles: list[str] = []):
     num = buckets.shape[1] if buckets.ndim > 1 else 1
