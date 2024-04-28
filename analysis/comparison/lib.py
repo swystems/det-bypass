@@ -178,6 +178,29 @@ def plot_diffs(diffs: np.ndarray, iters=0, with_peaks=True, peaks_threshold=0):
 
     return fig
 
+
+def plot_diffs_top(diffs: np.ndarray, title='', with_peaks=True, peaks_threshold=0):
+    fig, axs = plt.subplots(1,2, figsize=(12, 3), layout="constrained")
+    fig.get_layout_engine().set(w_pad=0.15, h_pad=0.15, hspace=0, wspace=0)
+    # fig.suptitle(title)
+
+    peaks = None
+    if with_peaks:
+        peaks = compute_peaks(diffs, peaks_threshold)
+
+    axs[0].grid(linestyle="-")
+    axs[1].grid(linestyle="-")
+    axs[0].set_xlabel("Packet index")
+    axs[1].set_xlabel("Packet index")
+    axs[0].set_ylabel("Timestamp difference (ns)")
+    axs[0].scatter(x=diffs[:, 0], y=diffs[:, 1], s=1)
+    axs[1].scatter(x=diffs[:, 0], y=diffs[:, 2], s=1)
+    # if with_peaks and len(peaks[0]) > 0:
+    #         axs[1].scatter(x=diffs[peaks[0], 0], y=diffs[peaks[0], 1], s=1, c="red")
+    
+    return fig
+
+
 def plot_buckets(buckets: np.ndarray, info: BucketsInfo, send_rate: int = 0, suptitle: str = "", titles: list[str] = []):
     num = buckets.shape[1] if buckets.ndim > 1 else 1
     rows = int(np.sqrt(num))
