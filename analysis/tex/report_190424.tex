@@ -43,7 +43,7 @@ at a fixed sending rate. Each packet carries a packet ID and 4 timestamps:
 \end{itemize}
 
 We then calculate the difference between timestamps of successive packets
-to get the variations in latency. For example, $ts_1(33) - ts_1(32)$ where 33 and
+to get the variations in jitter. For example, $ts_1(33) - ts_1(32)$ where 33 and
 32 are the packet IDs, represents the time interval between the PING send timestamp
 of packet 32 and the PING send timestamp of packet 33. If there's no jitter,
 it should be equal to the sending rate. The difference between $ts_1(33) - ts_1(32)$
@@ -89,10 +89,10 @@ We test the following:
   \vspace{-1.8mm}
   \begin{itemize}
     \itemsep=-0.5mm
-    \item XDP-offload: packet is handled by an eBPF XDP hook and executed as early
-    as possible in the network stack 
-    \item AF\_XDP: XDP socket type which handles TX and RX buffer management to 
-    the application
+    \item XDP offload: packet is handled by an eBPF XDP hook and executed as early
+    as possible in the network stack. 
+    \item AF\_XDP: XDP socket type which pushes the TX and RX buffer management to 
+    the application level.
   \end{itemize}
     \item Standard network stack over UDP    
 \end{itemize}
@@ -107,9 +107,9 @@ outliers, which we refer to as ``peaks''. We observe two types of periodic peaks
 of which we have not yet identified the root
 cause. We refer to them as \textbf{$ts_1$-offset} and \textbf{$ts_2$-arrow}.
 
-\autoref{fig:1} shows a typical benchmark containing a thick baseline around the 
+\autoref{fig:1} shows a typical benchmark with a thick baseline around the 
 sending rate ($996\mu s$), which means that most packets are subject to a minimal 
-jitter apart from the the outlier types that we analyze below.
+jitter, and the outliers that we analyze below.
 
 \paragraph*{$ts_1$-offset} The top-left plot in \autoref{fig:1}, representing the difference
 between 2 successive send events of the PING packet on host A, shows 
