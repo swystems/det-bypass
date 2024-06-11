@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -49,16 +50,16 @@ static const char *sec_name = "xdp";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong_xsk";
 static const char *mapname = "xsk_map";
 
-__attribute_maybe_unused__ static const char *outfile = "pingpong_xsk.dat";
+static const char *outfile = "pingpong_xsk.dat";
 static persistence_agent_t *persistence_agent;
 
 struct config {
-    __u32 xdp_flags;
+    uint32_t xdp_flags;
     int ifindex;
     char *ifname;
-    uint32_t iters;   // number of pingpong packet exchanges
+    uint64_t iters;   // number of pingpong packet exchanges
     uint64_t interval;// interval between two pingpong packet exchanges
-    __u16 xsk_bind_flags;
+    uint16_t xsk_bind_flags;
     int xsk_if_queue;
     bool xsk_poll_mode;
 };
@@ -74,6 +75,8 @@ struct xsk_socket_info {
     struct xsk_ring_prod tx;
     struct xsk_umem_info *umem;
     struct xsk_socket *xsk;
+
+    pthread_spinlock_t xsk_client_lock;// client needs synchronization beacuse it sends and receives at the same time.
 
     uint64_t umem_frame_addr[NUM_FRAMES];
     uint32_t umem_frame_free;
@@ -97,7 +100,7 @@ struct config cfg = {
 
     .xsk_if_queue = QUEUE_ID,
     .xdp_flags = XDP_FLAGS_UPDATE_IF_NOEXIST | XDP_FLAGS_DRV_MODE,
-    .xsk_bind_flags = 0,
+    .xsk_bind_flags = XDP_ZEROCOPY,
     .xsk_poll_mode = false,
 };
 
@@ -204,6 +207,7 @@ static struct xsk_socket_info *xsk_configure_socket (struct config *cfg,
     if (!xsk_info)
         return NULL;
 
+    pthread_spin_init (&xsk_info->xsk_client_lock, PTHREAD_PROCESS_PRIVATE);
     xsk_info->umem = umem;
     xsk_cfg.rx_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
     xsk_cfg.tx_size = XSK_RING_PROD__DEFAULT_NUM_DESCS;
@@ -307,13 +311,19 @@ static void complete_tx (struct xsk_socket_info *xsk)
  */
 static int xsk_send_packet (struct xsk_socket_info *socket, uint64_t addr, uint32_t len, bool is_umem_frame, bool complete)
 {
+#if !SERVER
+    pthread_spin_lock (&socket->xsk_client_lock);
+#endif
     int ret;
     uint32_t tx_idx = 0;
 
     ret = xsk_ring_prod__reserve (&socket->tx, 1, &tx_idx);
-    if (ret != 1)
+    if (UNLIKELY (ret != 1))
     {
         /* No more transmit slots, drop the packet */
+#if !SERVER
+        pthread_spin_unlock (&socket->xsk_client_lock);
+#endif
         return -1;
     }
 
@@ -334,6 +344,9 @@ static int xsk_send_packet (struct xsk_socket_info *socket, uint64_t addr, uint3
     {
         complete_tx (socket);
     }
+#if !SERVER
+    pthread_spin_unlock (&socket->xsk_client_lock);
+#endif
 
     return 0;
 }
@@ -417,8 +430,15 @@ static void handle_receive_packets (struct xsk_socket_info *xsk)
     uint32_t idx_rx = 0, idx_fq = 0;
 
     rcvd = xsk_ring_cons__peek (&xsk->rx, RX_BATCH_SIZE, &idx_rx);
+
     if (!rcvd)
+    {
         return;
+    }
+
+#if !SERVER
+    pthread_spin_lock (&xsk->xsk_client_lock);
+#endif
 
     /*
      * Not sure about this instruction and the if block.
@@ -461,6 +481,10 @@ static void handle_receive_packets (struct xsk_socket_info *xsk)
 
     /* Do we need to wake up the kernel for transmission */
     complete_tx (xsk);
+
+#if !SERVER
+    pthread_spin_unlock (&xsk->xsk_client_lock);
+#endif
 
     //STOP_TIMER ();
 }
@@ -505,7 +529,7 @@ static void rx_and_process (struct config *cfg,
  * @param aux the socket information structure.
  * @return 0 if the packet was successfully sent, -1 otherwise.
  */
-int client_send_pp_packet (char *buf, const int packet_id, struct sockaddr_ll *addr __unused, void *aux)
+int client_send_pp_packet (char *buf, const uint64_t packet_id, struct sockaddr_ll *addr __unused, void *aux)
 {
     struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
     ip->id = htons (packet_id);
@@ -544,6 +568,28 @@ void initialize_client (const struct config *cfg, struct xsk_socket_info *socket
     struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
 
     start_sending_packets (cfg->iters, cfg->interval, base_packet, &sock_addr, client_send_pp_packet, (void *) socket);
+}
+
+int xsk_cleanup (struct xsk_socket_info *xsk)
+{
+    xsk_socket__delete (xsk->xsk);
+    xsk_umem__delete (xsk->umem->umem);
+#if !SERVER
+    pthread_spin_destroy (&xsk->xsk_client_lock);
+#endif
+    free (xsk->umem);
+    free (xsk);
+    return 0;
+}
+
+/**
+ * Handle the SIGINT signal, which is sent when the user presses Ctrl+C.
+ *
+ * @param sig the signal number.
+ */
+void interrupt_handler (int sig __unused)
+{
+    global_exit = true;
 }
 
 int main (int argc __unused, char **argv __unused)
@@ -592,12 +638,6 @@ int main (int argc __unused, char **argv __unused)
         return EXIT_SUCCESS;
     }
 
-    uint8_t src_mac[ETH_ALEN];
-    uint32_t src_ip;
-    uint8_t dest_mac[ETH_ALEN];
-    uint32_t dest_ip;
-    exchange_eth_ip_addresses (cfg.ifindex, server_ip, SERVER, src_mac, dest_mac, &src_ip, &dest_ip);
-
     struct bpf_object *obj = read_xdp_file (filename);
     if (obj == NULL)
     {
@@ -606,6 +646,15 @@ int main (int argc __unused, char **argv __unused)
     }
 
     detach_xdp (obj, prog_name, cfg.ifindex, pinpath);
+
+    uint8_t src_mac[ETH_ALEN];
+    uint32_t src_ip;
+    uint8_t dest_mac[ETH_ALEN];
+    uint32_t dest_ip;
+    exchange_eth_ip_addresses (cfg.ifindex, server_ip, SERVER, src_mac, dest_mac, &src_ip, &dest_ip);
+
+    signal (SIGINT, interrupt_handler);
+
     obj = read_xdp_file (filename);
     if (obj == NULL)
     {
@@ -670,8 +719,8 @@ int main (int argc __unused, char **argv __unused)
     fflush (stdout);
 
 #if !SERVER
-        persistence_agent = persistence_init (outfile, persistence_flags);
-        initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
+    persistence_agent = persistence_init (outfile, persistence_flags, &cfg.interval);
+    initialize_client (&cfg, xsk_socket, src_mac, dest_mac, &src_ip, &dest_ip);
 #endif
 
     /* Receive and count packets than drop them */
@@ -682,11 +731,16 @@ int main (int argc __unused, char **argv __unused)
     fprintf (stdout, "Experiment finished in %lu milliseconds.\n", time_taken);
 
     /* Cleanup */
-    xsk_socket__delete (xsk_socket->xsk);
-    xsk_umem__delete (umem->umem);
+#if !SERVER
+    pthread_cancel (get_sender_thread ());
+    pthread_join (get_sender_thread (), NULL);
+#endif
+    xsk_cleanup (xsk_socket);
 
     if (persistence_agent)
         persistence_agent->close (persistence_agent);
+
+    bpf_xdp_detach (cfg.ifindex, XDP_FLAGS_DRV_MODE, 0);
 
     return EXIT_SUCCESS;
 }

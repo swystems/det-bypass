@@ -1,0 +1,25 @@
+---
+- hosts: all
+  gather_facts: True
+  gather_subset:
+    - "!all"
+  tasks:
+    - name: Clean build directory
+      shell: |
+        cd {{ base_dir }}
+        rm -rf build
+      when: clean_build | default(false)
+
+    - name: Build pingpong programs
+      shell: |
+        cd {{ base_dir }}
+        mkdir -p build
+        cd build
+        cmake -DSERVER={{ 1 if 'rx_nodes' in group_names else 0 }} -DDEBUG={{ debug | default('0') }} ..
+        make clean
+        make
+
+    - name: Reload ldconfig
+      become: yes
+      shell: |
+        ldconfig

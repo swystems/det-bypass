@@ -33,7 +33,7 @@ static struct option long_options[] = {
     {"help", no_argument, 0, 'h'},
     {0, 0, 0, 0}};
 
-bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_t *iters)
+bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint64_t *iters)
 {
     int opt;
     *iters = 0;
@@ -47,7 +47,7 @@ bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_
             *ifname = optarg;
             break;
         case 'p':
-            *iters = atoi (optarg);
+            *iters = atoll (optarg);
             break;
         case 'r':
             *remove = true;
@@ -77,14 +77,14 @@ static struct option long_options[] = {
     {"help", no_argument, 0, 'h'},
     {0, 0, 0, 0}};
 
-bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags)
+bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint64_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags)
 {
     int opt;
     *iters = 0;
     *interval = 0;
     *remove = false;
 
-    while ((opt = getopt_long (argc, argv, "d:p:i:s:r:h", long_options, NULL)) != -1)
+    while ((opt = getopt_long (argc, argv, "d:p:i:s:r:hm:", long_options, NULL)) != -1)
     {
         switch (opt)
         {
@@ -92,7 +92,7 @@ bool xdp_parse_args (int argc, char **argv, char **ifname, bool *remove, uint32_
             *ifname = optarg;
             break;
         case 'p':
-            *iters = atoi (optarg);
+            *iters = atoll (optarg);
             break;
         case 'i':
             *interval = atoi (optarg);

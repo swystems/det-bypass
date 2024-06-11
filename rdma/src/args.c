@@ -33,7 +33,7 @@ static struct option long_options[] = {
     {"help", no_argument, 0, 'h'},
     {0, 0, 0, 0}};
 
-bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint32_t *iters)
+bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint64_t *iters)
 {
     int opt;
     *iters = 0;
@@ -49,7 +49,7 @@ bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint32_t *i
             *gidx = atoi (optarg);
             break;
         case 'p':
-            *iters = atoi (optarg);
+            *iters = atoll (optarg);
             break;
         case 'h':
             return false;
@@ -76,7 +76,7 @@ static struct option long_options[] = {
     {"measurement", required_argument, 0, 'm'},
     {0, 0, 0, 0}};
 
-bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags)
+bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint64_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags)
 {
     int opt;
     *iters = 0;
@@ -94,7 +94,7 @@ bool ib_parse_args (int argc, char **argv, char **ibname, int *gidx, uint32_t *i
             *gidx = atoi (optarg);
             break;
         case 'p':
-            *iters = atoi (optarg);
+            *iters = atoll (optarg);
             break;
         case 'i':
             *interval = atoi (optarg);

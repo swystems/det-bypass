@@ -13,6 +13,12 @@
           - libcap-dev
 #          - libbpf-dev - libbpf-dev is an older version, best to install from source
           - gcc-multilib # needed for <asm/types.h>
+    # below needed for ubuntu 20.04
+    # - name:  remove libbf0 package (breaks dependencies)
+    #   become: yes
+    #   apt:
+    #     name: libbpf0
+    #     state: absent
     - name: Install libxdp
       block:
         - name: Clone xdp-project/xdp-tools

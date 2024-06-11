@@ -1,0 +1,107 @@
+all:
+  hosts:
+    poll1:
+      ansible_host: swystems.poll1
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.1"
+    poll2:
+      ansible_host: swystems.poll2
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.2"
+    xsk1:
+      ansible_host: swystems.xsk1
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.1"
+    xsk2:
+      ansible_host: swystems.xsk2
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.2"
+    rdma1:
+      ansible_host: swystems.rdma1
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.1"
+    rdma2:
+      ansible_host: swystems.rdma2
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.2"
+    noby1:
+      ansible_host: swystems.noby1
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.1"
+    noby2:
+      ansible_host: swystems.noby2
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.2"
+    xdp1:
+      ansible_host: swystems.xdp1
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.1"
+    xdp2:
+      ansible_host: swystems.xdp2
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.2"
+
+poll_tx:
+  hosts:
+    poll1:
+poll_rx:
+  hosts:
+    poll2:
+
+xsk_tx:
+  hosts:
+    xsk1:
+xsk_rx:
+  hosts:
+    xsk2:
+
+rdma_tx:
+  hosts:
+    rdma1:
+rdma_rx:
+  hosts:
+    rdma2:
+
+noby_tx:
+  hosts:
+    noby1:
+noby_rx:
+  hosts:
+    noby2:
+
+xdp_tx:
+  hosts:
+    xdp1:
+xdp_rx:
+  hosts:
+    xdp2:

@@ -1,0 +1,20 @@
+# Description: This file is used to run the server program on the devices.
+# Parameters:
+#   - prog_title: Title of the program, for display purposes (e.g. "XDP Poll")
+#   - prog_dir: Directory where the program is located, relative to the base directory (e.g. "xdp")
+#   - prog_name: Name of the program (e.g. "xdp_poll")
+#   - devices: List of devices to run the program on (e.g. "eth0")
+---
+- name: "Stop {{ prog_title }}"
+  become: yes
+  shell: |
+    pkill -f {{ prog_name }} || true
+  ignore_errors: yes
+- name: "Run {{ prog_title }} (Server)"
+  become: yes
+  shell: |
+    cd {{ base_dir }}/build/{{ prog_dir }}
+    {{ execute_command }}./{{ prog_name }} {% if no_dev is not defined %}-d {{ item }} {% endif %} -p {{ packets }} {{ extra_args | default('') }} > out.stdout 2> out.stderr &
+  with_items: "{{ devices }}"
+  async: 10000000000
+  poll: 0

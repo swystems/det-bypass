@@ -1,0 +1,27 @@
+---
+- hosts: all
+  gather_facts: False
+  tasks:
+    - name: sudo block
+      block:
+        
+        - name: Install base packages
+          apt:
+            pkg:
+            - tuned
+        
+        - name: make config dir
+          file:
+            path: /etc/tuned/cstates-max/
+            state: directory
+        
+        - name: copy tuned max c state config
+          copy:
+            src: files/tuned.conf
+            dest: /etc/tuned/cstates-max/
+
+        - name: apply max cstate config
+          shell: |
+            tuned-adm profile cstates-max
+
+      become: yes

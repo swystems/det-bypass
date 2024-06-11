@@ -26,33 +26,33 @@
           - libnl-route-3-dev
           - libnl-utils
 
-    - name: Add persistent naming to RoCE devices
-      become: yes
-      lineinfile:
-        path: /usr/lib/udev/rules.d/60-rdma-persistent-naming.rules
-        regexp: '^ACTION=="add", SUBSYSTEM=="infiniband"'
-        line: 'ACTION=="add", SUBSYSTEM=="infiniband", PROGRAM="rdma_rename %k NAME_PCI"'
-        state: present
-      notify:
-        - Reboot
+  #   - name: Add persistent naming to RoCE devices
+  #     become: yes
+  #     lineinfile:
+  #       path: /usr/lib/udev/rules.d/60-rdma-persistent-naming.rules
+  #       regexp: '^ACTION=="add", SUBSYSTEM=="infiniband"'
+  #       line: 'ACTION=="add", SUBSYSTEM=="infiniband", PROGRAM="rdma_rename %k NAME_PCI"'
+  #       state: present
+  #     notify:
+  #       - Reboot
 
-    - name: Flush handlers
-      meta: flush_handlers
+  #   - name: Flush handlers
+  #     meta: flush_handlers
 
-    - name: Rename IB node descriptors
-      become: yes
-      shell: |
-        hostname -s > /sys/class/infiniband/{{ item }}/node_desc
-      loop: "{{ibdevs}}"
+  #   - name: Rename IB node descriptors
+  #     become: yes
+  #     shell: |
+  #       hostname -s > /sys/class/infiniband/{{ item }}/node_desc
+  #     loop: "{{ibdevs}}"
 
-    # needed?
-    - name: Clone and build the RDMA-core repo
-      shell: |
-        git clone https://github.com/linux-rdma/rdma-core.git
-        cd rdma-core/
-        ./build.sh
+  #   # needed?
+  #   - name: Clone and build the RDMA-core repo
+  #     shell: |
+  #       git clone https://github.com/linux-rdma/rdma-core.git
+  #       cd rdma-core/
+  #       ./build.sh
 
-  handlers:
-    - name: Reboot
-      become: yes
-      reboot:
+  # handlers:
+  #   - name: Reboot
+  #     become: yes
+  #     reboot:

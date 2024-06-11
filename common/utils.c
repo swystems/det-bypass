@@ -1,5 +1,7 @@
 #include "utils.h"
 
+#define CPU_FREQ (2.4 * 1000000000)
+
 inline uint64_t get_time_ns (void)
 {
     struct timespec t;
@@ -9,12 +11,23 @@ inline uint64_t get_time_ns (void)
 
 inline void pp_sleep (uint64_t ns)
 {
-    uint32_t s = ns / 1000000000LL;
-
-    struct timespec t;
-    t.tv_sec = s;
-    t.tv_nsec = ns - s * 1000000000LL;
-    clock_nanosleep (CLOCK_MONOTONIC, 0, &t, NULL);
+    if (ns <= 0)
+        return;
+    if (ns <= 1000000)// 1 ms
+    {
+        uint64_t start = get_time_ns ();
+        while (get_time_ns () - start < ns)
+        {
+            BARRIER ();
+        }
+    }
+    else
+    {
+        struct timespec t;
+        t.tv_sec = ns / 1000000000;
+        t.tv_nsec = ns % 1000000000;
+        nanosleep (&t, NULL);
+    }
 }
 
 void hex_dump (const void *data, size_t size)
@@ -57,4 +70,3 @@ void hex_dump (const void *data, size_t size)
         }
     }
 }
-

@@ -1,0 +1,11 @@
+---
+ansible_user: dvr0
+base_dir: "/users/{{ansible_user}}/det-bypass"
+isolated_cores_list:
+  - 0
+  - 1
+  - 2
+isolated_cores: "{{ isolated_cores_list | join(',') }}"
+non_isolated_cores: "3-19"
+rx_queue_idx: 0
+cpu_freq: 2400000000 # 2.4 GHz

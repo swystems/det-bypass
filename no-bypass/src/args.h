@@ -12,7 +12,7 @@
 void nobypass_print_usage (char *prog);
 
 #if SERVER
-bool nobypass_parse_args (int argc, char **argv, uint32_t *iters);
+bool nobypass_parse_args (int argc, char **argv, uint64_t *iters);
 #else
-bool nobypass_parse_args (int argc, char **argv, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags);
+bool nobypass_parse_args (int argc, char **argv, uint64_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags);
 #endif

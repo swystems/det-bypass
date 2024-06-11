@@ -1,0 +1,24 @@
+- hosts: all
+  tasks:
+    - name: Setup NIC
+      become: yes
+      block:
+        - name: Configure NIC
+          shell: |
+            ethtool -K {{ item }}  \
+                rx  off \
+                tx  off \
+                tso off \
+                gso off \
+                gro off \
+                lro off > /dev/null 2>&1
+            ethtool -C {{ item }}  \
+                adaptive-rx     off \
+                adaptive-tx     off \
+                rx-usecs        0   \
+                rx-frames       0   \
+                tx-usecs        0   \
+                tx-frames       0   >   /dev/null 2>&1
+            ethtool -K {{ item }}  \
+                ntuple on
+          loop: "{{devs}}"

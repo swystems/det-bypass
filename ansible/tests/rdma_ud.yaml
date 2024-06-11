@@ -1,0 +1,31 @@
+---
+- hosts: rdma_rx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  gather_facts: no
+  tasks:
+    - import_tasks: tasks/run_server.yaml
+      vars:
+        prog_title: "RDMA UD"
+        prog_dir: "rdma"
+        prog_name: "ud_pingpong"
+        devices: "{{ ibdevs }}"
+        extra_args: "-g 0"
+
+- hosts: rdma_tx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  gather_facts: no
+  tasks:
+    - import_tasks: tasks/run_client.yaml
+      vars:
+        prog_title: "RDMA UD"
+        prog_dir: "rdma"
+        prog_name: "ud_pingpong"
+        devices: "{{ ibdevs }}"
+        extra_args: "-g 0"
+
+    - import_tasks: tasks/wait.yaml
+      vars:
+        prog_title: "RDMA UD"
+        prog_name: "ud_pingpong"

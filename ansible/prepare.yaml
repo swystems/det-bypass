@@ -3,6 +3,8 @@
   gather_facts: True
   gather_subset:
     - "!all"
+  vars:
+    kernel_version: "6.6.19"
   tasks:
     - name: Update packages
       become: yes
@@ -22,24 +24,27 @@
           - cmake
           - clang
           - git
+          - tuned
 
-    - name: Setup kernel parameters
+    - name: Update kernel to {{ kernel_version }}
       block:
-        - name: Modify GRUB file
+        - name: Download ubuntu-mainline-kernel.sh
           become: yes
-          lineinfile:
-            path: /etc/default/grub
-            regexp: '^GRUB_CMDLINE_LINUX='
-            line: 'GRUB_CMDLINE_LINUX="isolcpus={{isolated_cores}} nohz_full={{isolated_cores}} rcu_nocbs={{isolated_cores}} default_hugepagesz=1G hugepagesz=1G hugepages=8 iommu=pt intel_iommu=on"'
-            state: present
-        - name: Update grub
+          get_url:
+            url: "https://raw.githubusercontent.com/pimlie/ubuntu-mainline-kernel.sh/master/ubuntu-mainline-kernel.sh"
+            dest: /opt/ubuntu-mainline-kernel.sh
+            mode: 0755
+        - name: Install kernel {{ kernel_version }}
           become: yes
           shell: |
-            update-grub2
-
-    - name: Reboot the system
-      become: yes
-      reboot:
+            /opt/ubuntu-mainline-kernel.sh -i {{ kernel_version }}
+        - name: Reboot the system
+          become: yes
+          reboot:
+        - name: Fix apt packages
+          become: yes
+          shell: |
+            apt --fix-broken install -y
 
     - name: Add /usr/local/lib to ldconfig
       block:

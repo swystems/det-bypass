@@ -1,6 +1,6 @@
 // Require information: Device name, Port GID Index, Server IP
 #include <malloc.h>
-#include <stdatomic.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,7 +12,6 @@
 #include "../common/common.h"
 #include "../common/net.h"
 #include "../common/persistence.h"
-//#include "ccan/minmax.h"
 #include "src/args.h"
 #include "src/ib_net.h"
 #include "src/pingpong.h"
@@ -27,6 +26,8 @@
 #define PRIORITY 0
 
 persistence_agent_t *persistence_agent;
+
+static volatile bool global_exit = false;
 
 /**
  * Work Request IDs.
@@ -301,7 +302,6 @@ int pp_post_recv (struct pingpong_context *ctx, int queue_idx)
  */
 int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey, int queue_idx)
 {
-    LOG (stdout, "Waiting for lock\n");
     const struct ib_node_info *remote = &ctx->remote_info;
     struct ibv_sge list = {
         .addr = buffer + 40,
@@ -326,7 +326,7 @@ int pp_post_send (struct pingpong_context *ctx, uintptr_t buffer, uint32_t lkey,
 
 int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc)
 {
-    __attribute_maybe_unused__ const uint64_t ts = get_time_ns ();
+    const uint64_t ts = get_time_ns ();
     if (wc.status != IBV_WC_SUCCESS)
     {
         LOG (stderr, "Failed status %s (%d) for wr_id %d\n", ibv_wc_status_str (wc.status), wc.status, (int) wc.wr_id);
@@ -366,7 +366,7 @@ int parse_single_wc (struct pingpong_context *ctx, struct ibv_wc wc)
     BUSY_WAIT (BITSET_TEST (ctx->pending_send, queue_idx));
     ctx->recv_payloads[queue_idx]->ts[1] = ts;
     ctx->recv_payloads[queue_idx]->ts[2] = get_time_ns ();
-    LOG (stdout, "Sending back packet %d from queue %d\n", ctx->recv_payloads[queue_idx]->id, queue_idx);
+    LOG (stdout, "Sending back packet %llu from queue %d\n", ctx->recv_payloads[queue_idx]->id, queue_idx);
     if (pp_post_send (ctx, (uintptr_t) ctx->recv_bufs + queue_idx * PACKET_SIZE, ctx->recv_mr->lkey, queue_idx))
     {
         LOG (stderr, "Couldn't post send\n");
@@ -430,7 +430,7 @@ int pp_ib_connect (struct pingpong_context *ctx, int gidx, struct ib_node_info *
     return 0;
 }
 
-int pp_send_single_packet (char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+int pp_send_single_packet (char *buf __unused, const uint64_t packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
 
@@ -443,11 +443,16 @@ int pp_send_single_packet (char *buf __unused, const int packet_id, struct socka
     return pp_post_send (ctx, (uintptr_t) ctx->send_buf, ctx->send_mr->lkey, -1);
 }
 
+void sigint_handler (int sig __unused)
+{
+    global_exit = true;
+}
+
 int main (int argc, char **argv)
 {
     char *ib_devname = NULL;
     int port_gid_idx = 0;
-    uint32_t iters = 0;
+    uint64_t iters = 0;
 
     char *server_ip = NULL;
 #if SERVER
@@ -465,7 +470,7 @@ int main (int argc, char **argv)
         return 1;
     }
 
-    persistence_agent = persistence_init ("ud.dat", persistence_flags);
+    persistence_agent = persistence_init ("ud.dat", persistence_flags, &interval);
     if (!persistence_agent)
     {
         LOG (stderr, "Failed to initialize persistence agent\n");
@@ -527,12 +532,14 @@ int main (int argc, char **argv)
         }
     }
 
+    signal (SIGINT, sigint_handler);
+
 #if !SERVER
     start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
 #endif
 
-    uint32_t recv_idx = 0;
-    while (LIKELY (recv_idx < iters))
+    uint64_t recv_idx = 0;
+    while (LIKELY (recv_idx < iters && !global_exit))
     {
         struct ibv_wc wc[2];
         int ne;
@@ -545,21 +552,24 @@ int main (int argc, char **argv)
                 fprintf (stderr, "Poll CQ failed %d\n", ne);
                 return 1;
             }
-        } while (!ne);
+        } while (!ne && !global_exit);
+
+        if (UNLIKELY (global_exit))
+            break;
 
         for (int i = 0; i < ne; ++i)
         {
             if (UNLIKELY (parse_single_wc (ctx, wc[i])))
             {
                 fprintf (stderr, "Couldn't parse WC\n");
-                return 1;
+                goto done;
             }
 
             if (wc[i].wr_id >= PINGPONG_RECV_WRID)
                 recv_idx = max (recv_idx, ctx->recv_payloads[wc[i].wr_id - PINGPONG_RECV_WRID]->id);
         }
     }
-
+done:
     LOG (stdout, "Received all packets\n");
 
     if (persistence_agent)

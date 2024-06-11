@@ -3,18 +3,16 @@
 #include "../common/persistence.h"
 #include "src/args.h"
 #include <arpa/inet.h>
-#include <getopt.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 
-#define PINGPONG_UDP_PORT 12345
-
 persistence_agent_t *persistence_agent;
+
+static volatile bool global_exit = false;
 
 int new_socket (void)
 {
@@ -43,14 +41,14 @@ struct sockaddr_in new_sockaddr (const char *ip, uint16_t port)
     return addr;
 }
 
-void start_server (uint32_t iters)
+void start_server (uint64_t iters)
 {
     int socket = new_socket ();
     // wait for the client to connect
     struct sockaddr_in server_addr;
     memset (&server_addr, 0, sizeof (server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons (PINGPONG_UDP_PORT);
+    server_addr.sin_port = htons (XDP_UDP_PORT);
     server_addr.sin_addr.s_addr = htonl (INADDR_ANY);
 
     int ret = bind (socket, (struct sockaddr *) &server_addr, sizeof (server_addr));
@@ -65,8 +63,8 @@ void start_server (uint32_t iters)
     memset (&client_addr, 0, sizeof (client_addr));
 
     uint8_t recv_buf[PACKET_SIZE];
-    uint32_t last_idx = 0;
-    while (last_idx < iters)
+    uint64_t last_idx = 0;
+    while (last_idx < iters && !global_exit)
     {
         int ret = recvfrom (socket, recv_buf, PACKET_SIZE, 0, (struct sockaddr *) &client_addr, &client_addr_len);
         uint64_t ts = get_time_ns ();
@@ -92,7 +90,7 @@ void start_server (uint32_t iters)
     }
 }
 
-int send_single_packet (char *buf, const int packet_idx, struct sockaddr_ll *addr, void *aux)
+int send_single_packet (char *buf, const uint64_t packet_idx, struct sockaddr_ll *addr, void *aux)
 {
     int socket = *(int *) aux;
     struct pingpong_payload *payload = (struct pingpong_payload *) buf;
@@ -102,10 +100,10 @@ int send_single_packet (char *buf, const int packet_idx, struct sockaddr_ll *add
     return sendto (socket, buf, PACKET_SIZE, 0, (struct sockaddr *) addr, sizeof (*addr));
 }
 
-void start_client (uint32_t iters, uint64_t interval, const char *server_ip)
+void start_client (uint64_t iters, uint64_t interval, const char *server_ip)
 {
     int socket = new_socket ();
-    struct sockaddr_in server_addr = new_sockaddr (server_ip, PINGPONG_UDP_PORT);
+    struct sockaddr_in server_addr = new_sockaddr (server_ip, XDP_UDP_PORT);
     uint8_t send_buf[PACKET_SIZE];
     memset (send_buf, 0, PACKET_SIZE);
     // passing a ref to the local socket should work fine since the current function will not return until the pingpong is finished.
@@ -113,13 +111,13 @@ void start_client (uint32_t iters, uint64_t interval, const char *server_ip)
 
     uint8_t recv_buf[PACKET_SIZE];
     uint32_t last_idx = 0;
-    while (last_idx < iters)
+    while (last_idx < iters && !global_exit)
     {
         int ret = recvfrom (socket, recv_buf, PACKET_SIZE, 0, NULL, NULL);
         if (ret < 0)
         {
             PERROR ("recv");
-            return;
+            break;
         }
 
         struct pingpong_payload *payload = (struct pingpong_payload *) recv_buf;
@@ -130,26 +128,31 @@ void start_client (uint32_t iters, uint64_t interval, const char *server_ip)
     }
 
     close (socket);
-    persistence_agent->close (persistence_agent);
+}
+
+void sigint_handler (int signum __unused)
+{
+    global_exit = true;
 }
 
 int main (int argc, char **argv)
 {
+    signal (SIGINT, sigint_handler);
 #if SERVER
-    uint32_t iters = 0;
+    uint64_t iters = 0;
     if (!nobypass_parse_args (argc, argv, &iters))
     {
         nobypass_print_usage (argv[0]);
         return EXIT_FAILURE;
     }
 
-    LOG (stdout, "Starting server with iters=%u\n", iters);
+    LOG (stdout, "Starting server with iters=%lu\n", iters);
 
     start_server (iters);
 #else
     uint32_t persistence_flag = PERSISTENCE_M_ALL_TIMESTAMPS;
 
-    uint32_t iters = 0;
+    uint64_t iters = 0;
     uint64_t interval = 0;
     char *server_ip = NULL;
     if (!nobypass_parse_args (argc, argv, &iters, &interval, &server_ip, &persistence_flag))
@@ -158,16 +161,17 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    persistence_agent = persistence_init ("no-bypass.dat", persistence_flag);
+    persistence_agent = persistence_init ("no-bypass.dat", persistence_flag, &interval);
     if (!persistence_agent)
     {
         LOG (stderr, "Failed to initialize persistence agent\n");
         return EXIT_FAILURE;
     }
 
-    LOG (stdout, "Starting client with iters=%u, interval=%lu, server_ip=%s\n", iters, interval, server_ip);
+    LOG (stdout, "Starting client with iters=%lu, interval=%lu, server_ip=%s\n", iters, interval, server_ip);
 
     start_client (iters, interval, server_ip);
+    persistence_agent->close (persistence_agent);
 #endif
 
     return EXIT_SUCCESS;

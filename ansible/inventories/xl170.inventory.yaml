@@ -1,0 +1,52 @@
+all:
+  hosts:
+    xdp1:
+      ansible_host: swystems.xdp1
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.2"
+    xdp2:
+      ansible_host: swystems.xdp2
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.1"
+
+# All experiments use xdp1 as tx node and xdp2 as rx node
+poll_tx:
+  hosts:
+    xdp1:
+poll_rx:
+  hosts:
+    xdp2:
+
+xsk_tx:
+  hosts:
+    xdp1:
+xsk_rx:
+  hosts:
+    xdp2:
+
+rdma_tx:
+  hosts:
+    xdp1:
+rdma_rx:
+  hosts:
+    xdp2:
+
+noby_tx:
+  hosts:
+    xdp1:
+noby_rx:
+  hosts:
+    xdp2:
+
+xdp_tx:
+  hosts:
+    xdp1:
+xdp_rx:
+  hosts:
+    xdp2:

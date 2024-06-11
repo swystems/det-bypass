@@ -1,0 +1,29 @@
+---
+- hosts: poll_rx
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  gather_facts: no
+  tasks:
+    - import_tasks: tasks/run_server.yaml
+      vars:
+        prog_title: "XDP Poll"
+        prog_dir: "xdp"
+        prog_name: "pp_poll"
+        devices: "{{ devs }}"
+
+- hosts: poll_tx
+  gather_facts: no
+  vars_files:
+    - ../inventories/group_vars/all.yaml
+  tasks:
+    - import_tasks: tasks/run_client.yaml
+      vars:
+        prog_title: "XDP Poll"
+        prog_dir: "xdp"
+        prog_name: "pp_poll"
+        devices: "{{ devs }}"
+
+    - import_tasks: tasks/wait.yaml
+      vars:
+        prog_title: "XDP Poll"
+        prog_name: "pp_poll"

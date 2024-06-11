@@ -1,0 +1,128 @@
+---
+- hosts: all
+  gather_facts: yes
+  become: yes
+  tasks:
+    - name: Setup kernel parameters
+      become: yes
+      replace:
+        path: /etc/default/grub
+        regexp: '^GRUB_CMDLINE_LINUX="(.*)"'
+        replace: 'GRUB_CMDLINE_LINUX="{{boot_params}}"'
+        backup: true
+        # backrefs: true
+      vars:
+        boot_params: "isolcpus={{isolated_cores}} nohz_full={{isolated_cores}} intel_pstate=disable intel_idle.max_cstate=0 processor.max_cstate=0 idle=poll default_hugepagesz=1G hugepagesz=1G hugepages=8"
+      notify:
+        - Reboot
+
+    - name: Flush handlers
+      meta: flush_handlers
+
+    - name: Setup CPUs
+      become: yes
+      block:
+        - name: Stop IRQ balance
+          service:
+            name: irqbalance
+            state: stopped
+            enabled: no
+        - name: Route away IRQs from isolated cores
+          shell: |
+            # echo 0-{{ (isolated_cores_list | first | int) - 1 }},{{ (isolated_cores_list | last | int) + 1 }}-$(($(nproc) - 1 + {{ (isolated_cores_list | length) }})) > /proc/irq/*/smp_affinity_list
+            echo {{non_isolated_cores}} > /proc/irq/*/smp_affinity_list
+          args:
+            executable: /bin/zsh
+        - name: Set CPU max performance
+          shell: |
+            mkdir -p /etc/tuned/cpu-performance
+            echo "[main]\ninclude=network-latency\n\n[cpu]\nforce_latency=cstate.id:0\n" > /etc/tuned/cpu-performance/tuned.conf
+            tuned-adm profile cpu-performance
+
+    - name: Setup NIC
+      become: yes
+      block:
+        - name: Configure NIC
+          shell: |
+            ethtool -K {{ item }}  \
+                rx  off \
+                tx  off \
+                tso off \
+                gso off \
+                gro off \
+                lro off > /dev/null 2>&1
+            ethtool -C {{ item }}  \
+                adaptive-rx     off \
+                adaptive-tx     off \
+                rx-usecs        0   \
+                rx-frames       0   \
+                tx-usecs        0   \
+                tx-frames       0   >   /dev/null 2>&1
+            ethtool -K {{ item }}  \
+                ntuple on
+          loop: "{{devs}}"
+
+        - name: Retrieve NIC queues
+          shell: |
+            ethtool -l {{ item }} | grep Combined | awk '{print $2}'
+          loop: "{{devs}}"
+          register: nic_queues_cmd
+
+        - set_fact:
+            nic_queues: "{{ nic_queues_cmd.results[0].stdout_lines[0] | int }}"
+
+        - name: Create mask for NIC queues
+          set_fact:
+            mask: "{{ (mask | default('')) + '1 ' if ansible_loop != rx_queue_idx else (mask | default('')) + '0 ' }}"
+          loop: "{{ range(0, (nic_queues | int) )|list }}"
+          loop_control:
+            index_var: ansible_loop
+
+        - name: Distribute traffic away from dedicated queues
+          shell: |
+            ethtool -X {{ item }} weight {{ mask }}
+          loop: "{{devs}}"
+
+        - name: Setup flow steering
+          shell: |
+            ethtool -N {{ item }} flow-type ether proto 0x2002 queue {{ rx_queue_idx | int}}
+            ethtool -N {{ item }} flow-type udp4 dst-port 1234 queue {{ rx_queue_idx | int}}
+          loop: "{{devs}}"
+
+        - shell: |
+            ethtool -i {{ item }} | grep bus-info | awk '{print $2}'
+          loop: "{{devs}}"
+          register: bus_info_cmd
+
+        - set_fact:
+            bus_info: "{{ bus_info_cmd.results | map(attribute='stdout_lines') | list }}"
+
+        - debug:
+            var: bus_info
+
+        - name: "Retrieve IRQ id of queues {{ rx_queue_idx }}"
+          shell: |
+            grep mlx5_comp{{ (rx_queue_idx | int) + 1}}@pci:{{ item[0] }} /proc/interrupts | cut -d ':' -f1 | xargs
+          loop: "{{ bus_info }}"
+          register: irq_cmd
+
+        - set_fact:
+            irq: "{{ irq_cmd.results | map(attribute='stdout_lines') | flatten }}"
+
+        - debug:
+            var: irq
+
+        - name: Set CPU affinity of NIC RX queues
+          shell: |
+            echo {{ isolated_cores }} > /proc/irq/{{ item }}/smp_affinity_list
+          loop: "{{ irq }}"
+
+  handlers:
+    - name: Reboot
+      become: yes
+      block:
+        - name: Run update-grub
+          shell: |
+            update-grub2
+        - name: Reboot
+          reboot:

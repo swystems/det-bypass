@@ -1,6 +1,9 @@
 .idea
 .env
 .ipynb_checkpoints
+.*
 
 build/
 *.o
+
+sap.inventory.yaml

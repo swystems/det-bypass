@@ -334,7 +334,7 @@ int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
     return 0;
 }
 
-int pp_send_single_packet (char *buf __unused, const int packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+int pp_send_single_packet (char *buf __unused, const uint64_t packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
 {
     struct pingpong_context *ctx = (struct pingpong_context *) aux;
     *ctx->send_payload = new_pingpong_payload (packet_id);
@@ -371,7 +371,7 @@ int parse_single_wc (struct pingpong_context *ctx)
 {
     const enum ibv_wc_status status = ctx->cq->status;
     const uint64_t wr_id = ctx->cq->wr_id;
-    __attribute_maybe_unused__ const uint64_t ts = ibv_wc_read_completion_ts (ctx->cq);
+    const uint64_t ts = ibv_wc_read_completion_ts (ctx->cq);
 
     if (status != IBV_WC_SUCCESS)
     {
@@ -420,7 +420,7 @@ int main (int argc, char **argv)
 {
     char *ib_devname = NULL;
     int port_gid_idx = 0;
-    uint32_t iters = 0;
+    uint64_t iters = 0;
     char *server_ip = NULL;
 
 #if SERVER
@@ -437,7 +437,7 @@ int main (int argc, char **argv)
         ib_print_usage (argv[0]);
         return 1;
     }
-    persistence = persistence_init ("rc.dat", persistence_flags);
+    persistence = persistence_init ("rc.dat", persistence_flags, &interval);
     if (!persistence)
     {
         fprintf (stderr, "Couldn't initialize persistence agent\n");
@@ -491,7 +491,7 @@ int main (int argc, char **argv)
     start_sending_packets (iters, interval, (char *) ctx->send_buf, NULL, pp_send_single_packet, ctx);
 #endif
 
-    uint32_t recv_count, send_count;
+    uint64_t recv_count, send_count;
     recv_count = send_count = 0;
 
     while (recv_count < iters)

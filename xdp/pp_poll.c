@@ -4,6 +4,7 @@
 #include "src/args.h"
 #include "src/xdp-loading.h"
 
+#include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
 
@@ -15,9 +16,9 @@ static const char *prog_name = "xdp_main";
 static const char *pinpath = "/sys/fs/bpf/xdp_pingpong";
 static const char *mapname = "last_payload";
 
-__attribute_maybe_unused__ static const char *outfile = "pingpong.dat";
+static const char *outfile = "pingpong.dat";
 
-static persistence_agent_t *persistence;
+volatile bool global_exit;
 
 // global variable to store the loaded xdp object
 static struct bpf_object *loaded_xdp_obj;
@@ -33,13 +34,14 @@ static struct bpf_object *loaded_xdp_obj;
  * @param busy_poll_next if true, the function busy-waits the next index, otherwise round-robin is used
  * @return the index of the retrieved payload
  */
-inline uint32_t poll_next_payload (void *map_ptr, struct pingpong_payload *dest_payload, uint32_t next_index)
+inline uint32_t poll_next_payload (volatile void *volatile map_ptr, struct pingpong_payload *dest_payload, uint32_t next_index)
 {
     volatile struct pingpong_payload *volatile map = map_ptr;
     map += next_index;
 
-    BUSY_WAIT (!valid_pingpong_payload (map));
-    *dest_payload = *map;
+    BUSY_WAIT (!valid_pingpong_payload (map) && !global_exit);
+    memcpy (dest_payload, (void *) map, sizeof (struct pingpong_payload));
+
     memset ((void *) map, 0, sizeof (struct pingpong_payload));
 
     return (next_index + 1) % PACKETS_MAP_SIZE;
@@ -69,10 +71,10 @@ void *dump_map (void *aux)
             }
             else
             {
-                if (map->magic == PINGPONG_MAGIC)
-                    printf ("(%07d)", map->id);// to be read
+                if (valid_pingpong_payload (map))
+                    printf ("(%07llu)", map->id);// to be read
                 else
-                    printf ("[%07d]", map->id);
+                    printf ("[%07llu]", map->id);
             }
             printf (" ");
             map++;
@@ -94,17 +96,149 @@ void *dump_map (void *aux)
 }
 #endif
 
-int sock;
-
-int send_packet (char *buf, const int packet_id, struct sockaddr_ll *sock_addr, void *aux __unused)
+int send_packet (char *buf, const uint64_t packet_id, struct sockaddr_ll *sock_addr, void *aux)
 {
+    int sock = *(int *) aux;
     struct iphdr *ip = (struct iphdr *) (buf + sizeof (struct ethhdr));
     ip->id = htons (packet_id);
     struct pingpong_payload *payload = packet_payload (buf);
     *payload = new_pingpong_payload (packet_id);
     payload->ts[0] = get_time_ns ();
+
     return send_pingpong_packet (sock, buf, sock_addr);
 }
+
+#if !SERVER
+
+static persistence_agent_t *persistence;
+
+static void sigint_handler (int sig __unused)
+{
+    global_exit = true;
+}
+
+void start_client (uint64_t iters, uint64_t interval, struct sockaddr_ll *server_addr, char *base_packet, void *map_ptr)
+{
+    int sock = setup_socket ();
+    if (sock < 0)
+    {
+        fprintf (stderr, "ERR: setup_socket failed\n");
+        return;
+    }
+
+    signal (SIGINT, sigint_handler);
+
+    LOG (stdout, "Starting sender thread... ");
+    start_sending_packets (iters, interval, base_packet, server_addr, send_packet, &sock);
+    LOG (stdout, "OK\n");
+
+    // If the packet is not malloc'd, for some reason (??) nothing works.
+    // I'm not sure, looks like the stack variable does not have the same size in memory as the one malloc'd. ???????
+    struct pingpong_payload *buf_payload = malloc (sizeof (struct pingpong_payload));
+
+    uint64_t current_id = 0;
+    uint32_t next_map_idx = 0;
+
+#if DUMP_MAP
+    pthread_t map_dump_thread;
+    struct dump_args *dump_map_args = malloc (sizeof (struct dump_args));
+    dump_map_args->map_ptr = map_ptr;
+    dump_map_args->us_poll_idx = &next_map_idx;
+    dump_map_args->running = true;
+    pthread_create (&map_dump_thread, NULL, dump_map, dump_map_args);
+#endif
+
+    while (current_id < iters && !global_exit)
+    {
+        next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
+        if (UNLIKELY (global_exit))
+            break;
+
+        // LOG (stdout, "Packet: %llu %llu %llu %llu %llu %u\n", buf_payload->id, buf_payload->ts[0], buf_payload->ts[1], buf_payload->ts[2], buf_payload->ts[3], buf_payload->magic);
+
+        if (buf_payload->phase != 2)
+        {
+            fprintf (stderr, "ERR: expected phase 2, got %d\n", buf_payload->phase);
+            fprintf (stderr, "Packet: %llu %llu %llu %llu %llu\n", buf_payload->id, buf_payload->ts[0], buf_payload->ts[1], buf_payload->ts[2], buf_payload->ts[3]);
+            continue;
+        }
+
+#if DEBUG
+        if (buf_payload->id - current_id != 1)
+            LOG (stderr, "WARN: missed %ld packets between %lu and %llu\n", (int64_t) buf_payload->id - (int64_t) current_id - 1, current_id, buf_payload->id);
+#endif
+
+        buf_payload->ts[3] = get_time_ns ();
+
+        persistence->write (persistence, buf_payload);
+
+        current_id = max (current_id, buf_payload->id);
+    }
+
+    LOG (stdout, "Global exit: %d\n", global_exit);
+
+    pthread_cancel (get_sender_thread ());
+    pthread_join (get_sender_thread (), NULL);
+
+    close (sock);
+
+#if DUMP_MAP
+    dump_map_args->running = false;
+    pthread_join (map_dump_thread, NULL);
+    free (dump_map_args);
+#endif
+
+    munmap (map_ptr, sizeof (struct pingpong_payload) * PACKETS_MAP_SIZE);
+}
+#endif
+
+#if SERVER
+void start_server (const uint64_t iters, char *buf, struct sockaddr_ll *client_addr, void *map_ptr)
+{
+    int sock = setup_socket ();
+
+    struct pingpong_payload *buf_payload = packet_payload (buf);
+
+    uint64_t current_id = 0;
+    uint32_t next_map_idx = 0;
+
+    while (current_id < iters && !global_exit)
+    {
+        next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
+
+        //LOG (stdout, "Packet: %llu %llu %llu %llu %llu %u\n", buf_payload->id, buf_payload->ts[0], buf_payload->ts[1], buf_payload->ts[2], buf_payload->ts[3], buf_payload->magic);
+        if (UNLIKELY (buf_payload->phase != 0))
+        {
+            fprintf (stderr, "ERR: expected phase 0, got %d\n", buf_payload->phase);
+            return;
+        }
+
+        buf_payload->ts[1] = get_time_ns ();
+
+#if DEBUG
+        if (buf_payload->id - current_id != 1)
+            LOG (stderr, "WARN: missed %ld packets between %lu and %llu\n", (int64_t) buf_payload->id - (int64_t) current_id - 1, current_id, buf_payload->id);
+#endif
+
+        current_id = max (current_id, buf_payload->id);
+
+        buf_payload->phase = 2;
+
+        buf_payload->ts[2] = get_time_ns ();
+
+        int ret = send_pingpong_packet (sock, buf, client_addr);
+
+        if (UNLIKELY (ret < 0))
+        {
+            perror ("sendto");
+            return;
+        }
+
+        if (UNLIKELY (current_id >= iters))
+            break;
+    }
+}
+#endif
 
 /**
  * Start the pingpong experiment between the current node and the remote node.
@@ -143,7 +277,7 @@ int send_packet (char *buf, const int packet_id, struct sockaddr_ll *sock_addr, 
  * @param iters the number of packets to send
  * @param interval only for the client, the interval between packets
  */
-void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, __attribute_maybe_unused__ const uint32_t interval)
+void start_pingpong (int ifindex, const char *server_ip, const uint64_t iters, const uint32_t interval)
 {
     uint8_t src_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     uint8_t dest_mac[ETH_ALEN] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
@@ -167,13 +301,6 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, _
     }
     LOG (stdout, "OK\n");
 
-    sock = setup_socket ();
-    if (sock < 0)
-    {
-        fprintf (stderr, "ERR: setup_socket failed\n");
-        return;
-    }
-
     char buf[PACKET_SIZE];
     memset (buf, 0, PACKET_SIZE);
 
@@ -183,108 +310,11 @@ void start_pingpong (int ifindex, const char *server_ip, const uint32_t iters, _
 
     struct sockaddr_ll sock_addr = build_sockaddr (ifindex, dest_mac);
 
-#if !SERVER
-    LOG (stdout, "Starting sender thread... ");
-    start_sending_packets (iters, interval, buf, &sock_addr, send_packet, NULL);
-    LOG (stdout, "OK\n");
-#endif
-
-    // if client, send packet (phase 0), receive it back (phase 1), send it back (phase 2) and wait to receive it back again (phase 3)
-    // then start again.
-    // if server, wait to receive packet (phase 1), send it back (phase 2), repeat.
-    printf ("\nStarting pingpong experiment... \n\n");
-    fflush (stdout);
-    uint32_t current_id = 0;
-    uint32_t next_map_idx = 0;
-
-#if DUMP_MAP
-    pthread_t map_dump_thread;
-    struct dump_args *dump_map_args = malloc (sizeof (struct dump_args));
-    if (!is_server)
-    {
-        dump_map_args->map_ptr = map_ptr;
-        dump_map_args->us_poll_idx = &next_map_idx;
-        dump_map_args->running = true;
-        pthread_create (&map_dump_thread, NULL, dump_map, dump_map_args);
-    }
-#endif
-    struct pingpong_payload *buf_payload = packet_payload (buf);
-
 #if SERVER
-    while (current_id < iters)
-    {
-        next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
-
-        if (UNLIKELY (buf_payload->phase != 0))
-        {
-            fprintf (stderr, "ERR: expected phase 0, got %d\n", buf_payload->phase);
-            return;
-        }
-
-        buf_payload->ts[1] = get_time_ns ();
-
-#if DEBUG
-        if (buf_payload->id - current_id != 1)
-            LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
-#endif
-
-        current_id = max (current_id, buf_payload->id);
-
-        buf_payload->phase = 2;
-
-        buf_payload->ts[2] = get_time_ns ();
-
-        int ret = send_pingpong_packet (sock, buf, &sock_addr);
-
-        if (UNLIKELY (ret < 0))
-        {
-            perror ("sendto");
-            return;
-        }
-
-        if (UNLIKELY (current_id >= iters))
-            break;
-    }
+    start_server (iters, buf, &sock_addr, map_ptr);
 #else
-    while (current_id < iters)
-    {
-        next_map_idx = poll_next_payload (map_ptr, buf_payload, next_map_idx);
-
-        if (buf_payload->phase != 2)
-        {
-            fprintf (stderr, "ERR: expected phase 2, got %d\n", buf_payload->phase);
-            return;
-        }
-
-#if DEBUG
-        if (buf_payload->id - current_id != 1)
-            LOG (stderr, "WARN: missed %d packets between %d and %d\n", buf_payload->id - current_id - 1, current_id, buf_payload->id);
+    start_client (iters, interval, &sock_addr, buf, map_ptr);
 #endif
-
-        buf_payload->ts[3] = get_time_ns ();
-
-        persistence->write (persistence, buf_payload);
-
-        current_id = max (current_id, buf_payload->id);
-    }
-#endif
-
-    printf ("Pingpong experiment finished\n");
-
-    close (sock);
-
-#if DUMP_MAP
-    if (!is_server)
-    {
-        dump_map_args->running = false;
-        pthread_join (map_dump_thread, NULL);
-        free (dump_map_args);
-    }
-#endif
-
-    munmap (map_ptr, sizeof (struct pingpong_payload));
-    if (persistence)
-        persistence->close (persistence);
 }
 
 int attach_pingpong_xdp (int ifindex)
@@ -322,7 +352,7 @@ int main (int argc, char **argv)
 {
     char *ifname = argv[1];
     bool remove;
-    uint32_t iters = 0;
+    uint64_t iters = 0;
     uint64_t interval = 0;
     char *server_ip = NULL;
 
@@ -341,7 +371,7 @@ int main (int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    persistence = persistence_init (outfile, persistence_flags);
+    persistence = persistence_init (outfile, persistence_flags, &interval);
     if (!persistence)
     {
         fprintf (stderr, "ERR: persistence_init failed\n");
@@ -379,5 +409,11 @@ int main (int argc, char **argv)
     }
 
     start_pingpong (ifindex, server_ip, iters, interval);
+
+#if !SERVER
+    if (persistence)
+        persistence->close (persistence);
+#endif
+
     return EXIT_SUCCESS;
 }

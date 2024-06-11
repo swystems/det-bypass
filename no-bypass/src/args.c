@@ -27,7 +27,7 @@ static struct option long_options[] = {
     {"help", no_argument, 0, 'h'},
     {0, 0, 0, 0}};
 
-bool nobypass_parse_args (int argc, char **argv, uint32_t *iters)
+bool nobypass_parse_args (int argc, char **argv, uint64_t *iters)
 {
     int opt;
     *iters = 0;
@@ -37,7 +37,7 @@ bool nobypass_parse_args (int argc, char **argv, uint32_t *iters)
         switch (opt)
         {
         case 'p':
-            *iters = atoi (optarg);
+            *iters = atoll (optarg);
             break;
         case 'h':
             return false;
@@ -60,7 +60,7 @@ static struct option long_options[] = {
     {"measurement", required_argument, 0, 'm'},
     {0, 0, 0, 0}};
 
-bool nobypass_parse_args (int argc, char **argv, uint32_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags)
+bool nobypass_parse_args (int argc, char **argv, uint64_t *iters, uint64_t *interval, char **server_ip, uint32_t *pers_flags)
 {
     int opt;
     *iters = 0;
@@ -72,7 +72,7 @@ bool nobypass_parse_args (int argc, char **argv, uint32_t *iters, uint64_t *inte
         switch (opt)
         {
         case 'p':
-            *iters = atoi (optarg);
+            *iters = atoll (optarg);
             break;
         case 'i':
             *interval = atoi (optarg);

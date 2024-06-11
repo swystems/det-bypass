@@ -1,0 +1,13 @@
+# Description: Wait for a program to complete
+# Parameters:
+#   - prog_title: Title of the program, for display purposes (e.g. "XDP Poll")
+#   - prog_name: Name of the program (e.g. "pp_poll")
+#   - timeout: Timeout in seconds (e.g. "10")
+---
+- name: Wait for {{ prog_title }} to complete
+  shell: >
+    while true; do
+      sleep {{ ((timeout | int)/10) | round | int }}
+      ps -ef | grep -v grep | grep -q {{ prog_name }} || break
+    done
+  when: sync_wait is not defined or sync_wait == "yes"

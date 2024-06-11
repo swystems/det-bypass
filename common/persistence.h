@@ -1,12 +1,15 @@
 #pragma once
 
 #include "common.h"
+#include <assert.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mman.h>
 #include <sys/queue.h>
+#include <unistd.h>
 
 enum persistence_output_flags {
     PERSISTENCE_F_FILE = 1U << 0,
@@ -52,6 +55,31 @@ struct min_max_latency_data {
     uint64_t max;
     struct pingpong_payload min_payload;
     struct pingpong_payload max_payload;
+};
+
+/* Range in nanoseconds of each bucket */
+#define NUM_BUCKETS 20000
+#define OFFSET 1000000
+
+struct bucket {
+    uint64_t rel_latency[4];
+    uint64_t abs_latency;
+};
+
+struct bucket_data {
+    uint64_t tot_packets;
+    uint64_t send_interval;
+    struct bucket min_values;
+    struct bucket max_values;
+
+    // The layout in memory is as follows:
+    // [BUCKET 0 SEND PING] [BUCKET 0 RECV PING] [BUCKET 0 SEND PONG] [BUCKET 0 RECV PONG] [BUCKET 0 LATENCY]
+    // The layout is handled manually for convenience.
+    union {
+        uint64_t *ptr;
+        struct bucket *buckets;
+    };
+    struct pingpong_payload prev_payload;
 };
 
 /**
@@ -110,6 +138,8 @@ typedef struct persistence_agent {
  * This function should be called before any other persistence function and only once.
  *
  * @param filename the name of the file to store data
+ * @param flags flags to define the type of measurement to store
+ * @param aux auxiliary data to be used by the persistence agent
  * @return 0 on success, -1 on error
  */
-persistence_agent_t *persistence_init (const char *filename, uint32_t flags);
+persistence_agent_t *persistence_init (const char *filename, uint32_t flags, void *aux);

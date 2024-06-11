@@ -3,7 +3,7 @@ project(rdma)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/../config.cmake)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -g -Wall -Werror -Wextra -Wpedantic")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -g -Wall -Wextra -Wpedantic")
 
 link_libraries(ibverbs)
 file(GLOB SOURCES src/*.c ../common/*.c)

@@ -22,6 +22,14 @@
 int setup_socket (void);
 
 /**
+ * Convert a string IP address to a uint32_t.
+ * @param ip the string IP address
+ * @param ip_addr the output buffer to write the IP address to
+ * @return 0 on success, -1 on failure
+ */
+int convert_ip (const char *ip, uint32_t *ip_addr);
+
+/**
  * Construct the base structure of the packet inside buf by writing the ethernet and ip headers
  * to the given buffer.
  *
@@ -66,7 +74,7 @@ struct sockaddr_ll build_sockaddr (int ifindex, const unsigned char *dest_mac);
  */
 int send_pingpong_packet (int sock, const char *buf, struct sockaddr_ll *sock_addr);
 
-typedef int (*send_packet_t) (char *, const int, struct sockaddr_ll *, void *);
+typedef int (*send_packet_t) (char *, uint64_t, struct sockaddr_ll *, void *);
 
 /**
  * Start a thread to send the packets every `interval` microseconds.
@@ -79,7 +87,11 @@ typedef int (*send_packet_t) (char *, const int, struct sockaddr_ll *, void *);
  * @param send_packet the function to use to send the packets, called by the sending thread.
  * @return 0 on success, -1 on failure
  */
-int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux);
+int start_sending_packets (uint64_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux);
+
+#if !SERVER
+pthread_t get_sender_thread (void);
+#endif
 
 /**
  * Retrieve the local interface MAC address.

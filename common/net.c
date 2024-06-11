@@ -247,11 +247,11 @@ struct sockaddr_ll build_sockaddr (int ifindex, const unsigned char *dest_mac)
 
 inline int send_pingpong_packet (int sock, const char *restrict buf, struct sockaddr_ll *restrict sock_addr)
 {
-    return sendto (sock, buf, PACKET_SIZE, MSG_DONTWAIT, (struct sockaddr *) sock_addr, sizeof (struct sockaddr_ll));
+    return sendto (sock, buf, PACKET_SIZE, 0, (struct sockaddr *) sock_addr, sizeof (struct sockaddr_ll));
 }
 
 struct sender_data {
-    uint32_t iters;
+    uint64_t iters;
     uint64_t interval;
     char *base_packet;
     struct sockaddr_ll *sock_addr;
@@ -267,16 +267,16 @@ void *thread_send_packets (void *args)
 
     for (uint64_t id = 1; id <= data->iters; ++id)
     {
-
+        uint64_t __start = get_time_ns ();
         int ret = data->send_packet (data->base_packet, id, data->sock_addr, data->aux);
         if (ret < 0)
         {
             PERROR ("data->send_packet");
             return NULL;
         }
-        //LOG (stdout, "Sent packet %lu\n", id);
-
-        pp_sleep (data->interval);
+        uint64_t interval = get_time_ns () - __start;
+        if (interval < data->interval)
+            pp_sleep (data->interval - interval);
     }
 
     free (data->base_packet);
@@ -287,7 +287,7 @@ void *thread_send_packets (void *args)
 
 static pthread_t sender_thread;
 
-int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux)
+int start_sending_packets (uint64_t iters, uint64_t interval, char *base_packet, struct sockaddr_ll *sock_addr, send_packet_t send_packet, void *aux)
 {
     struct sender_data *data = malloc (sizeof (struct sender_data));
     if (!data)
@@ -322,4 +322,9 @@ int start_sending_packets (uint32_t iters, uint64_t interval, char *base_packet,
     }
 
     return 0;
+}
+
+pthread_t get_sender_thread (void)
+{
+    return sender_thread;
 }

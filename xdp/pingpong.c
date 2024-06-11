@@ -73,15 +73,19 @@ int add_packet_to_map (struct pingpong_payload *payload)
          *
          * TODO: Fix the data race in the reset of the index
          */
+        bpf_printk ("Map is full. Dropping packet at index: %D\n", key);
         bpf_spin_lock (&lock->value);
         lock->index = key;
         bpf_spin_unlock (&lock->value);
         return -1;
     }
 
-    bpf_printk ("Adding packet id: %u at index: %u\n", payload->id, key);
-
+    // Remove the last bit of magic, so the userspace cannot read the packet yet;
+    payload->magic = payload->magic & 0xFFFFFFFE;
+    // Write all the content of the packet.
     *old_payload = *payload;
+    // Add the last bit of magic, so the userspace can read the packet. Sort of a "commit" operation.
+    old_payload->magic |= 1;
 
     return 0;
 }
@@ -115,7 +119,10 @@ int xdp_main (struct xdp_md *ctx)
         return XDP_PASS;
     }
 
-    add_packet_to_map (payload);
+    if (add_packet_to_map (payload))
+    {
+        bpf_printk ("Could not add packet %llu to map\n", payload->id);
+    }
 
     return XDP_DROP;
 }
