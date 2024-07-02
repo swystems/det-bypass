@@ -7,3 +7,5 @@ build/
 *.o
 
 sap.inventory.yaml
+
+det-bypass-rust/target/

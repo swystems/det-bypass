@@ -1,0 +1,10 @@
+[package]
+name = "no_bypass_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.5.8"
+no_bypass_lib = {path = "../no_bypass_lib/"}
+
+
