@@ -11,12 +11,8 @@ fn main() {
         .value_parser(["all", "latency", "buckets"]))
         .get_matches();
     
-    println!("test {}", matches.get_one::<u32>("packets").unwrap());
-    println!("{}", matches.get_one::<u32>("interval").unwrap());
-    println!("{}", matches.get_one::<String>("server").unwrap());
-    println!("{}", matches.get_one::<String>("measurament").unwrap());
-
-    let persistence_flag: &str = matches.get_one::<String>("measurament").unwrap_or(&"all".to_string());
+    let default = &"all".to_string();
+    let persistence_flag: &str = matches.get_one::<String>("measurament").unwrap_or(default);
     let iters: u64 = 0;
     let interval: u64 = *matches.get_one::<u64>("interval").unwrap_or(&0);
     let server: &str = matches.get_one::<String>("server").expect("server is a required argument");

@@ -136,12 +136,12 @@ pub fn pers_measurament_to_flag(m: &str) -> u32 {
 
 
 fn persistence_init_min_max_latency() -> MinMaxLatencyData{
-    MinMaxLatencyData{min: std::u64::MAX, max:0, min_payload: None, max_payload: None}
+    MinMaxLatencyData{min: u64::MAX, max:0, min_payload: None, max_payload: None}
 }
 
 fn persistence_init_buckets(init_aux: &u32) -> BucketData{
     let interval = *init_aux as u64;
-    let min_values = Bucket{rel_latency: [std::u64::MAX; 4], abs_latency: std::u64::MAX};
+    let min_values = Bucket{rel_latency: [u64::MAX; 4], abs_latency: u64::MAX};
     let max_values = Bucket{rel_latency: [0;4], abs_latency: 0};
     let memory_size = bucket_compute_hugepage_size();
     unsafe{
@@ -156,22 +156,22 @@ fn bucket_compute_hugepage_size() -> u32 {
     unsafe {
     let page_size: i64 = libc::sysconf(libc::_SC_PAGESIZE);
     let page_size: u32 = page_size.try_into().unwrap();
-    return (std::mem::size_of::<u64>() as u32) * (NUM_BUCKETS+2)*5+page_size-1;
-    };
+    (std::mem::size_of::<u64>() as u32) * (NUM_BUCKETS+2)*5+page_size-1
+    }
 }
 
 
 fn persistence_close_min_max(file: & mut Box<dyn Write> ,aux: &MinMaxLatencyData){
-    if aux.min != std::u64::MAX {
+    if aux.min != u64::MAX {
         let payload = &aux.min_payload.as_ref().unwrap();
-        let res = writeln!(file, "{}", format!("{:X}: {:X} {:X} {:X} {:X} (LATENCY {:X} ns)", payload.id, payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3], aux.min));
+        let res = writeln!(file, "{:X}: {:X} {:X} {:X} {:X} (LATENCY {:X} ns)", payload.id, payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3], aux.min);
         if let Err(e) = res {
             panic!("{}",e)
         };
     }
     if aux.max != 0 {
         let payload = &aux.max_payload.as_ref().unwrap();
-        let res = writeln!(file, "{}", format!("{:X}: {:X} {:X} {:X} {:X} (LATENCY {:X} ns)", payload.id, payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3], aux.max));
+        let res = writeln!(file, "{:X}: {:X} {:X} {:X} {:X} (LATENCY {:X} ns)", payload.id, payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3], aux.max);
         if let Err(e) = res {
             panic!("{}", e)
         }
@@ -266,7 +266,7 @@ impl  PersistenceAgent {
     pub fn write(&mut self, payload: PingPongPayload){
         match &mut self.data.aux {
             Some(PData::Latency(ref mut lat)) => PersistenceAgent::write_latency(lat, payload),
-            Some(PData::Bucket(buc)) => (),
+            Some(PData::Bucket(_buc)) => (),
             None => ()
         }
     }
@@ -275,11 +275,11 @@ impl  PersistenceAgent {
         match &self.data.aux {
             Some(PData::Latency(d)) => {
                 let f = & mut self.data.file;
-                persistence_close_min_max(f, &d)
+                persistence_close_min_max(f, d)
             }, 
             Some(PData::Bucket(d)) => {
                 let f = & mut self.data.file;
-                persistence_close_buckets(f, &d) 
+                persistence_close_buckets(f, d) 
             } 
             _ => () 
         }
