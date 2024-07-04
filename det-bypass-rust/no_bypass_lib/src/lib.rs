@@ -1,8 +1,9 @@
 use std::net::{self, Ipv4Addr, SocketAddrV4};
 
-use persistence_agent::{PersistenceAgent, PingPongPayload};
+use common::persistence_agent;
+use common::persistence_agent::PersistenceAgent;
+use common::persistence_agent::PingPongPayload;
 
-mod persistence_agent;
 mod common_net;
 mod utils;
 
