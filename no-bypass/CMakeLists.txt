@@ -14,3 +14,10 @@ file(GLOB SOURCES src/*.c ../common/*.c)
 
 add_executable(no-bypass ${SOURCES} main.c)
 #target_link_libraries(no-bypass PRIVATE Threads::Threads)
+
+
+# .cpp
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -g -Wall -Wextra -Wpedantic -pthread")
+
+add_executable(hwts ${SOURCES} hwts.cpp)
