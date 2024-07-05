@@ -1,8 +1,6 @@
 ---
 - hosts: all
-  gather_facts: True
-  gather_subset:
-    - "!all"
+  gather_facts: no
   tasks:
     - name: Clean build directory
       shell: |

@@ -1,6 +1,6 @@
 ---
 - hosts: all
-  gather_facts: False
+  gather_facts: no
   tasks:
     - name: Upload source files
       #become: yes

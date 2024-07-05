@@ -1,9 +1,12 @@
 #pragma once
 
+#define _GNU_SOURCE
+
 #include "common.h"
 #include "utils.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <linux/in.h>

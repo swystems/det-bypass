@@ -58,4 +58,6 @@
       become: yes
       shell: |
         ethtool -N {{ item }} flow-type ether proto 2002 action 0
+        ethtool -N {{ item }} flow-type ether proto 544 action 0
+        ethtool -N {{ item }} flow-type ether proto 8194 action 0
       loop: "{{devs}}"

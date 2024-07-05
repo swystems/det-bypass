@@ -81,6 +81,7 @@
         - name: Distribute traffic away from dedicated queues
           shell: |
             ethtool -X {{ item }} weight {{ mask }}
+          ignore_errors: true
           loop: "{{devs}}"
 
         - name: Setup flow steering

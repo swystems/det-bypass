@@ -1,19 +1,25 @@
 all:
   hosts:
     xdp1:
-      ansible_host: swystems.xdp1
-      devs:
-        - ens1f1np1
-      ibdevs:
-        - rocep3s0f1
-      ip: "10.10.1.2"
-    xdp2:
-      ansible_host: swystems.xdp2
+      ansible_host: cloudlab1
+      isolated_cores_list:
+        - 8
+        - 9
       devs:
         - ens1f1np1
       ibdevs:
         - rocep3s0f1
       ip: "10.10.1.1"
+    xdp2:
+      ansible_host: cloudlab2
+      isolated_cores_list:
+        - 8
+        - 9
+      devs:
+        - ens1f1np1
+      ibdevs:
+        - rocep3s0f1
+      ip: "10.10.1.2"
 
 # All experiments use xdp1 as tx node and xdp2 as rx node
 poll_tx:
@@ -48,5 +54,12 @@ xdp_tx:
   hosts:
     xdp1:
 xdp_rx:
+  hosts:
+    xdp2:
+
+tx_nodes:
+  hosts:
+    xdp1:
+rx_nodes:
   hosts:
     xdp2:

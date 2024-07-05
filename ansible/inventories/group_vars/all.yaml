@@ -1,11 +1,10 @@
 ---
 ansible_user: dvr0
-base_dir: "/users/{{ansible_user}}/det-bypass"
-isolated_cores_list:
-  - 0
-  - 1
-  - 2
-isolated_cores: "{{ isolated_cores_list | join(',') }}"
-non_isolated_cores: "3-19"
 rx_queue_idx: 0
+isolated_cores: "{{ isolated_cores_list | join(',') }}"
+isolated_cores_but_last: "{{ isolated_cores_list[:-1] | join(',') }}"
+# the last isolated core is reserved for the sending thread.
+# Ideally the inventory defines two isolated cores, one for the experimental program
+# and the next one for the sending thread. The core the sending thread is pinned to
+# is the core immediately after the last core used to run the program with taskset.
 cpu_freq: 2400000000 # 2.4 GHz

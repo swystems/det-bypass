@@ -261,8 +261,49 @@ struct sender_data {
     void *aux;
 };
 
+int stick_this_thread_to_core (int core_id)
+{
+    printf("Setting thread affinity to core %d\n", core_id);
+    int num_cores = sysconf (_SC_NPROCESSORS_ONLN);
+    if (core_id < 0 || core_id >= num_cores)
+        return -EINVAL;
+
+    cpu_set_t cpuset;
+    CPU_ZERO (&cpuset);
+    CPU_SET (core_id, &cpuset);
+
+    pthread_t current_thread = pthread_self ();
+    return pthread_setaffinity_np (current_thread, sizeof (cpu_set_t), &cpuset);
+}
+
 void *thread_send_packets (void *args)
 {
+    sleep(2);
+    cpu_set_t current_mask;
+    if (sched_getaffinity (0, sizeof (cpu_set_t), &current_mask) < 0)
+    {
+        PERROR ("sched_getaffinity");
+        return NULL;
+    }
+    // set the thread affinity to the next thread
+    int core_id = 0;
+    int cnt = 0;
+    for (int i = 0; i < CPU_SETSIZE; ++i)
+    {
+        if (CPU_ISSET (i, &current_mask))
+        {
+            core_id = i + 1;
+            ++cnt;
+        }
+    }
+    // set the sending thread affinity only if the main thread is pinned to a single core
+    // i.e. we are running a test with isolation.
+    if (cnt == 1 && stick_this_thread_to_core (core_id) < 0)
+    {
+        PERROR ("stick_this_thread_to_core");
+        return NULL;
+    }
+
     struct sender_data *data = (struct sender_data *) args;
 
     for (uint64_t id = 1; id <= data->iters; ++id)
