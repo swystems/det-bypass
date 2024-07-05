@@ -58,7 +58,7 @@ impl PingPongPayload{
     pub fn deserialize(bytes: &[u8]) -> PingPongPayload {
         let id: u64 = u64::from_le_bytes(bytes[..8].try_into().unwrap());
         let phase: u32 = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
-        let magic: u32 = u32::from_le_bytes(bytes[44..].try_into().unwrap());
+        let magic: u32 = u32::from_le_bytes(bytes[44..48].try_into().unwrap());
         let mut ts: [u64; 4] = [0; 4];
         ts[0] = u64::from_le_bytes(bytes[8..16].try_into().unwrap());
         ts[1] = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
@@ -235,7 +235,7 @@ impl  PersistenceAgent {
         let file: Box<dyn Write> = if use_stdout {
             Box::new(std::io::stdout())
         } else {
-            File::open(Path::new(filename.unwrap())).map(|f| Box::new(f) as Box<dyn Write>).expect("")
+            File::create(Path::new(filename.unwrap())).map(|f| Box::new(f) as Box<dyn Write>).expect("")
         };
          
         if (flags & PERSISTENCE_M_MIN_MAX_LATENCY) != 0{

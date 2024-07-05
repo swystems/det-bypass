@@ -45,14 +45,18 @@ pub fn new_sockaddr(ip: &str, port: u16) -> SocketAddrV4{
 fn thread_send_packets<F>(mut data: SenderData<F>)
     where F: FnMut(Option<[char; 1024]>, u64, Option<SocketAddrV4>, & UdpSocket) + Send +'static
 {
+    println!("sending packets {}", data.iters);
     for id in 1..=data.iters {
+        println!("id is {id}");
         let start = utils::get_time_ns();
         (data.send_packet)(data.base_packet, id, data.socket_addr, &mut data.socket);
+        println!("start {} now {}", start, utils::get_time_ns());
         let interval = utils::get_time_ns() - start;
         if interval < data.interval {
             utils::pp_sleep(data.interval-interval); 
         }
     }
+    println!("finished sending packets");
 }
 
 
@@ -62,6 +66,7 @@ pub fn start_sending_packets<F>(iters: u64, interval: u64, base_packet: Option<[
         F: Send +'static
         
 {
+    println!("start sending packets");
     
     let sender_data = SenderData::new(iters, interval, base_packet, socket, socket_addr, send_packet);
     thread::spawn(move || thread_send_packets(sender_data)) 

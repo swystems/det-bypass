@@ -1,9 +1,11 @@
-use std::time::Instant;
+use std::time::SystemTime;
 
 pub fn get_time_ns() -> u64 {
-    let start = Instant::now();
-    let duration = start.elapsed();
-    duration.as_secs() * 1_000_000_000 + u64::from(duration.subsec_nanos())
+    let duration = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("SystemTime before UNIX EPOCH!");
+
+    duration.as_secs() * 1_000_000_000 + duration.subsec_nanos() as u64
 }
 
 
