@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Write;
+use std::io::{Error, Write};
 use std::path::Path;
 
 const NUM_BUCKETS: u32 = 20000;
@@ -82,7 +82,7 @@ struct MinMaxLatencyData  {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Bucket {
     rel_latency: [u64; 4],
     abs_latency: u64
@@ -98,7 +98,7 @@ struct BucketData {
     send_interval: u64,
     min_values: Bucket,
     max_values: Bucket,
-    union_data: BucketUnion,
+    buckets: [Bucket; NUM_BUCKETS as usize +2],
     prev_payload: Option<PingPongPayload>
 }
 
@@ -145,9 +145,10 @@ fn persistence_init_buckets(init_aux: &u32) -> BucketData{
     let max_values = Bucket{rel_latency: [0;4], abs_latency: 0};
     let memory_size = bucket_compute_hugepage_size();
     unsafe{
-        let ptr: *mut libc::c_void = libc::mmap(core::ptr::null_mut(), memory_size as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS  , -1, 0);
-        let union_data = BucketUnion{ ptr}; 
-        BucketData{tot_packets: 0, send_interval: interval, min_values, max_values, prev_payload: None, union_data}
+        //let ptr: *mut libc::c_void = libc::mmap(core::ptr::null_mut(), memory_size as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS  , -1, 0);
+        //let union_data = BucketUnion{ ptr}; 
+        let buckets = [Bucket{rel_latency: [0;4], abs_latency: 0}; NUM_BUCKETS as usize +2];
+        BucketData{tot_packets: 0, send_interval: interval, min_values, max_values, prev_payload: None, buckets}
     }
 }
 
@@ -176,6 +177,18 @@ fn persistence_close_min_max(file: & mut Box<dyn Write> ,aux: &MinMaxLatencyData
             panic!("{}", e)
         }
     }
+}
+
+
+fn bucket_idx(val: u64, min: u64, max: u64) -> u64{
+    if val < min {
+        return 0;
+    }
+    if val > max {
+        return NUM_BUCKETS as u64 +1;
+    }
+    let bucket_size: u64 = (max-min)/NUM_BUCKETS as u64;
+    return (val-min)/bucket_size +1;
 }
 
 
@@ -214,12 +227,10 @@ fn persistence_close_buckets(file: & mut Box<dyn Write>, aux: &BucketData){
     if let Err(e) = res {
         panic!("{}", e)
     }
-    unsafe {
-        for b in aux.union_data.buckets.iter() {
-            let res = writeln!(file, "{} {} {} {} {}", b.rel_latency[0], b.rel_latency[1], b.rel_latency[2], b.rel_latency[3], b.abs_latency);
-            if let Err(e) = res {
-                panic!("{}", e)
-            }
+    for b in aux.buckets.iter() {
+        let res = writeln!(file, "{} {} {} {} {}", b.rel_latency[0], b.rel_latency[1], b.rel_latency[2], b.rel_latency[3], b.abs_latency);
+        if let Err(e) = res {
+            panic!("{}", e)
         }
     }
 }
@@ -263,11 +274,64 @@ impl  PersistenceAgent {
         }
     }
 
+    fn write_buckets(bucket_data: &mut BucketData, payload: PingPongPayload) -> Result<(), Error>{
+        bucket_data.tot_packets+=1;
+        if ! payload.is_valid(){
+            bucket_data.prev_payload = Some(payload.clone());
+            return Err(Error::new(std::io::ErrorKind::Other, "writing to bucket failed"));
+        }
+        if payload.id% 1_000_000 == 0{
+            println!("{}", payload.id);
+        }
+        let mut ts_diff: [u64;4] = [0;4];
+        for i in 0..4{
+            if let Some(prev_payload) = &bucket_data.prev_payload{
+                if payload.ts[i] < prev_payload.ts[i] {
+                    eprintln!("ERROR: Timestamps are not monotonically increasing");
+                    return Err(Error::new(std::io::ErrorKind::Other, "timestamps are not monotonically increasing"));
+                }
+
+                ts_diff[i] = payload.ts[i] - prev_payload.ts[i];
+            }
+        }
+
+        let (rel_min, rel_max, abs_min, abs_max) = bucket_ranges(bucket_data.send_interval);
+        for i in 0..4 {
+            if ts_diff[i] < bucket_data.min_values.rel_latency[i] {
+                bucket_data.min_values.rel_latency[i] = ts_diff[i];
+            }
+            if ts_diff[i] > bucket_data.max_values.rel_latency[i] {
+                bucket_data.max_values.rel_latency[i] = ts_diff[i];
+            }
+            let idx = bucket_idx(ts_diff[i], rel_min, rel_max);
+            bucket_data.buckets[idx as usize].rel_latency[i] += 1;
+        }
+        let abs_latency = payload.compute_latency();
+        if abs_latency< bucket_data.min_values.abs_latency{
+           bucket_data.min_values.abs_latency = abs_latency; 
+        }
+        if abs_latency > bucket_data.max_values.abs_latency {
+            bucket_data.max_values.abs_latency = abs_latency;
+        }
+        let idx = bucket_idx(abs_latency, abs_min, abs_max);
+        bucket_data.buckets[idx as usize].abs_latency += 1;
+        bucket_data.prev_payload =Some(payload);
+        Ok(())
+    }
+        
+
     pub fn write(&mut self, payload: PingPongPayload){
         match &mut self.data.aux {
             Some(PData::Latency(ref mut lat)) => PersistenceAgent::write_latency(lat, payload),
-            Some(PData::Bucket(_buc)) => (),
-            None => ()
+            Some(PData::Bucket(buc)) => {
+                 let _ = PersistenceAgent::write_buckets(buc, payload);
+            }
+            None => {
+                let res = writeln!(self.data.file, "{} {} {} {} {}", payload.id, payload.ts[0], payload.ts[1], payload.ts[2], payload.ts[3]); 
+                if let Err(e) = res {
+                    panic!("{}", e)
+                }
+            }
         }
     }
 
