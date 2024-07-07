@@ -26,6 +26,7 @@ fn send_single_packet (_: Option<[char;PACKET_SIZE]> , packet_idx: u64, socket_a
     let mut payload = PingPongPayload::new(packet_idx);
     payload.set_ts_value(0, utils::get_time_ns());
     let res = socket.send_to(&payload.serialize(), socket_addr.unwrap());
+    println!("sending packet");
     if let Err(e) = res {
         panic!("Couldn't send payload, got error: {e}")
     }
@@ -33,13 +34,15 @@ fn send_single_packet (_: Option<[char;PACKET_SIZE]> , packet_idx: u64, socket_a
 
 fn start_client(iters: u64, interval: u64, server_ip: &str, persistence_agent: &mut PersistenceAgent){
     // the ip "0.0.0.0" means to bind to any available ip
-    let  socket = net::UdpSocket::bind("0.0.0.0").unwrap();
+    let  socket = net::UdpSocket::bind("0.0.0.0:0").unwrap();
     let socket_addr = common_net::new_sockaddr(server_ip, XDP_UPD_PORT);
     common_net::start_sending_packets(iters, interval, None, send_single_packet , socket.try_clone().unwrap(), Some(socket_addr));
     let mut recv_buf = [0; PACKET_SIZE];
     let mut last_idx: u64 = 0;
     while last_idx < iters {
+        println!("before");
         let res = socket.recv_from(&mut recv_buf);
+        println!("after");
         match res {
             Ok(r) => r,
             Err(e) => panic!("{e}")
