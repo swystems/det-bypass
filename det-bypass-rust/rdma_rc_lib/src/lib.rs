@@ -1,10 +1,12 @@
 use std::{process, time::{SystemTime, UNIX_EPOCH}};
 
 use std::io::Error;
+use common::persistence_agent::PersistenceAgent;
 use ib_net::ib_device_find_by_name;
 use rdma::device;
 
 mod ib_net;
+mod pingpong_context;
 
 
 
@@ -28,12 +30,16 @@ pub fn run_client(ib_devname: &str, port_gid_idx: u32, iters: u64, interval: u64
         Err(e) => return Err(Error::new(std::io::ErrorKind::Other, "writing to bucket failed")),
         Ok(dl) => dl
     };
+
+    let persistence = PersistenceAgent::new(Some("rc.dat"), persistence_flag, &(interval as u32));
     
     let device = ib_device_find_by_name(&device_list, ib_devname);
-    match device {
-        Err(e) => Err(e),
-        Ok(dev) => Ok(())
-    }
+    let device = match device {
+        Err(e) => return Err(e),
+        Ok(dev) => dev
+    };
+    
+    Ok(())
 }
 
 union PingPongUnion{
