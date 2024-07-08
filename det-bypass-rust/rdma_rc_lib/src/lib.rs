@@ -47,32 +47,3 @@ union PingPongUnion{
     //payload: PingPongPayload
 }
 
-
-
-//struct PingpongContext {
-//    pending: AtomicU8,// WID of the pending WR
-//
-//    send_flags: u32,
-//
-//    recv: PingPongUnion,
-//    send: PingPongUnion,
-//
-//    struct ibv_context *context;
-//
-//    struct ibv_pd *pd;
-//    uint64_t completion_timestamp_mask;
-//
-//    struct ibv_mr *recv_mr;
-//    struct ibv_mr *send_mr;
-//
-//    struct ibv_cq_ex *cq;
-//
-//    struct ibv_qp *qp;
-//    struct ibv_qp_ex *qpx;
-//};
-//
-
-fn pp_init_context(device: & device::Device){
-    
-
-}

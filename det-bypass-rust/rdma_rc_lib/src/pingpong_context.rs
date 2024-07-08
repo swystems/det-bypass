@@ -2,11 +2,12 @@ use std::{alloc::Layout, io::{Error, ErrorKind}, sync::atomic::AtomicU8};
 
 use std::alloc;
 use common::persistence_agent::PingPongPayload;
-use rdma::{bindings, mr::AccessFlags, pd::ProtectionDomain};
+use rdma::{bindings, mr::AccessFlags, pd::ProtectionDomain, qp::{ModifyOptions, QueuePairState}};
 
 
 const PACKET_SIZE: usize = 1024;
 const RECEIVE_DEPTH: usize = 500;
+const IB_PORT: u8 = 1;
 
 
 union PingPongContextUnion {
@@ -26,7 +27,19 @@ struct PingpongContext {
     send_mr: rdma::mr::MemoryRegion,
     cq: rdma::cq::CompletionQueue, 
     qp: rdma::qp::QueuePair, 
-    qpx: bindings::ibv_qp_ex
+    qpx: rdma::qp_ex::QueuePairEx 
+}
+
+impl Drop for PingpongContext{
+    fn drop(&mut self){
+        unsafe{
+            std::mem::ManuallyDrop::drop(&mut self.recv_union.payload);
+            std::mem::ManuallyDrop::drop(&mut self.send_union.payload);
+            let layout = Layout::from_size_align(PACKET_SIZE, std::mem::align_of::<u8>()).unwrap();
+            alloc::dealloc(self.recv_union.buf, layout);
+            alloc::dealloc(self.send_union.buf, layout);
+        }
+    }
 }
 
 
@@ -46,9 +59,7 @@ impl PingpongContext{
             return Err(Error::new(ErrorKind::Other, "Couldn't allocate memory for send_buf"));
         } 
 
-        //let recv_buf = PingPongPayload::new_empty();
-        //let send_buf = PingPongPayload::new_empty();
-        let mut context = match device.open(){
+        let context = match device.open(){
             Ok(ctx) => ctx,
             Err(e) => return Err(e)
         };
@@ -59,7 +70,7 @@ impl PingpongContext{
 
         let attrx: rdma::device::DeviceAttr = match rdma::device::DeviceAttr::query(&context){
             Ok(att) => att,
-            Err(e) => return Err(Error::new(ErrorKind::Other, "Device doesn't support completion timestamping"))
+            Err(_) => return Err(Error::new(ErrorKind::Other, "Device doesn't support completion timestamping"))
         }; 
         let completion_timestamp_mask = attrx.completion_timestamp_mask();
         let recv_mr = unsafe {
@@ -67,7 +78,7 @@ impl PingpongContext{
                 Ok(mr) => mr,
                 Err(e) => return Err(e)
             }
-        };
+        }; 
         let send_mr = unsafe {
             match rdma::mr::MemoryRegion::register(&pd, send_buf, PACKET_SIZE, AccessFlags::LOCAL_WRITE, ()){
                 Ok(mr) => mr,
@@ -75,7 +86,7 @@ impl PingpongContext{
             }
         };
 
-        let options = rdma::cq::CompletionQueue::options();
+        let mut options = rdma::cq::CompletionQueue::options();
         options.cqe(RECEIVE_DEPTH+1);
         options.wc_flags(bindings::IBV_WC_EX_WITH_COMPLETION_TIMESTAMP as u64);
 
@@ -84,7 +95,7 @@ impl PingpongContext{
             Err(e) => return Err(e)
         };
         
-        let qp_options: rdma::qp::QueuePairOptions = rdma::qp::QueuePair::options();
+        let mut qp_options: rdma::qp::QueuePairOptions = rdma::qp::QueuePair::options();
         qp_options.send_cq(&cq);
         qp_options.recv_cq(&cq);
         qp_options.cap(rdma::qp::QueuePairCapacity{max_send_wr: 1, max_recv_wr: RECEIVE_DEPTH as u32, max_send_sge: 1, max_recv_sge: 1, max_inline_data: 0});
@@ -94,13 +105,34 @@ impl PingpongContext{
         qp_options.send_ops_flags(bindings::IBV_QP_EX_WITH_SEND);
         let qp = match rdma::qp::QueuePair::create(&context, qp_options){
             Ok(qp) => qp,
-            Err(e) => return Err(Error::new(ErrorKind::Other, "Couldn't create qp"))
+            Err(_) => return Err(Error::new(ErrorKind::Other, "Couldn't create qp"))
         };
         
+        let qpx = match qp.to_qp_ex() {
+                Ok(qpx) => qpx,
+                Err(_) => return Err(Error::new(ErrorKind::Other, "Couldn't create qp_ex from qp"))
+        };
+        
+        let mut modify_options: ModifyOptions = ModifyOptions::default();
+        modify_options.qp_state(QueuePairState::Initialize);
+        modify_options.pkey_index(0);
+        modify_options.port_num(IB_PORT);
+        modify_options.qp_access_flags(AccessFlags::empty());
+        
+        match qp.modify(modify_options){
+            Ok(_) => (),
+            Err(_) => return Err(Error::new(ErrorKind::Other, "Failed to modify QP to INIT"))
+        };
+
         Ok(PingpongContext{
             pending: 0.into(), send_flags: bindings::IBV_SEND_SIGNALED,
             recv_union: PingPongContextUnion{buf: recv_buf}, send_union: PingPongContextUnion{buf: send_buf},
-            context, pd, completion_timestamp_mask, recv_mr, send_mr, cq, qp 
+            context, pd, completion_timestamp_mask, recv_mr, send_mr, cq, qp, qpx 
         })
     }
+
+    pub fn pp_ib_connect(&self){
+
+    }
+    
 }

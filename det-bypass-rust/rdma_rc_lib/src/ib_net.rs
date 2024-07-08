@@ -13,7 +13,7 @@ pub fn ib_device_find_by_name<'a>(device_list: &'a device::DeviceList, name: &st
     let mut dev: Option<&rdma::device::Device> = None;
     for device in device_list.as_slice() {
         if name == device.name(){
-            dev = Some(device.clone());
+            dev = Some(device);
         }
     }
     Ok(dev)
