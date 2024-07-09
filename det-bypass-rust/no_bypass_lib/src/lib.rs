@@ -3,9 +3,9 @@ use std::net::{self, Ipv4Addr, SocketAddrV4};
 use common::persistence_agent;
 use common::persistence_agent::PersistenceAgent;
 use common::persistence_agent::PingPongPayload;
+use common::utils;
 
 mod common_net;
-mod utils;
 
 
 const XDP_UPD_PORT: u16 = 1234;

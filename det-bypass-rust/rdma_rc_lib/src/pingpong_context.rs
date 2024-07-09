@@ -1,13 +1,16 @@
-use std::{alloc::Layout, io::{Error, ErrorKind}, sync::atomic::AtomicU8};
+use std::{alloc::Layout, io::{Error, ErrorKind}, sync::atomic::{AtomicU8, Ordering}};
 
 use std::alloc;
 use common::persistence_agent::PingPongPayload;
-use rdma::{bindings, mr::AccessFlags, pd::ProtectionDomain, qp::{ModifyOptions, QueuePairState}};
+use rdma::{ah::AddressHandleOptions, bindings, device::Mtu, mr::AccessFlags, pd::ProtectionDomain, qp::{ModifyOptions, QueuePairState}, wr::{RecvRequest, Sge}};
+use crate::ib_net::IbNodeInfo; 
 
 
 const PACKET_SIZE: usize = 1024;
 const RECEIVE_DEPTH: usize = 500;
 const IB_PORT: u8 = 1;
+const PINGPONG_RECV_WRID: u64 = 1;
+const PINGPONG_SEND_WRID: u64 = 2;
 
 
 union PingPongContextUnion {
@@ -15,7 +18,7 @@ union PingPongContextUnion {
     payload: std::mem::ManuallyDrop<PingPongPayload>
 }
 
-struct PingpongContext {
+pub struct PingpongContext {
     pending: AtomicU8,
     send_flags: u32,
     recv_union: PingPongContextUnion,
@@ -131,8 +134,93 @@ impl PingpongContext{
         })
     }
 
-    pub fn pp_ib_connect(&self){
+    pub fn send_payload(&mut self, payload: PingPongPayload){
+        unsafe{
+            *self.send_union.payload = payload;
+        }
+    }
 
+    pub fn pp_ib_connect(&self, port: u8, local_psn: u32, mtu: Mtu, sl: u8, dest: &IbNodeInfo, gid_idx: u8) -> Result<(), Error>{
+        let mut modify_options = ModifyOptions::default();
+        modify_options.qp_state(QueuePairState::ReadyToReceive);
+        modify_options.path_mtu(mtu);
+        modify_options.dest_qp_num(dest.qpn);
+        modify_options.rq_psn(dest.psn);
+        modify_options.max_dest_rd_atomic(1);
+        modify_options.min_rnr_timer(12);
+        let mut ah_option = AddressHandleOptions::default();
+        ah_option.dest_lid(dest.lid);
+        ah_option.service_level(sl);
+        ah_option.port_num(port);
+        if dest.gid.interface_id() != 0 {
+            ah_option.global_route_header(rdma::ah::GlobalRoute { dest_gid: dest.gid, flow_label: 0,
+                sgid_index: gid_idx, hop_limit: 1, traffic_class: 0 });
+        }
+        modify_options.ah_attr(ah_option);
+        match self.qp.modify(modify_options){
+            Ok(_) => (),
+            Err(_) => return Err(Error::new(ErrorKind::Other, "Failed to modify QP to RTR"))
+        };
+
+        let mut modify_options = ModifyOptions::default(); 
+        modify_options.qp_state(QueuePairState::ReadyToSend);
+        modify_options.timeout(31);
+        modify_options.retry_cnt(7);
+        modify_options.rnr_retry(7);
+        modify_options.sq_psn(local_psn);
+        modify_options.max_rd_atomic(1);
+         match self.qp.modify(modify_options){
+            Ok(_) => (),
+            Err(_) => return Err(Error::new(ErrorKind::Other, "Failed to modify QP to RTS"))
+        };
+        Ok(())
+    }
+
+    pub fn post_recv(&self, n: u32) -> Result<(), Error>{
+        let sge = unsafe{Sge{addr: self.recv_union.buf as u64, length: PACKET_SIZE as u32, lkey: self.recv_mr.lkey()}}; 
+        let mut wr = RecvRequest::zeroed();
+        wr.id(PINGPONG_RECV_WRID);
+        wr.sg_list(&[sge]);
+
+        for i in 0..n{
+            unsafe{
+                if let Ok(()) = self.qp.post_recv(&wr) {
+                    println!("Posted {i} receives");
+                    break
+                }
+            }   
+        }
+        
+        Ok(())
     }
     
+
+    pub fn post_send(&mut self) -> Result<(), Error>{
+        self.qpx.start_wr(); 
+        self.qpx.wr_id(PINGPONG_SEND_WRID);
+        self.qpx.wr_flags(self.send_flags);
+        let _ = self.qpx.post_send();
+        
+        let buf = unsafe{self.send_union.buf};
+        self.qpx.set_sge(self.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
+        match self.qpx.wr_complete(){
+            Ok(()) => (),
+            Err(e) => return Err(e)
+        };
+        self.pending.fetch_or(PINGPONG_SEND_WRID.try_into().unwrap(), Ordering::Relaxed);
+
+       Ok(()) 
+    }
 }
+
+pub fn u32_to_mtu(mtu: u32) -> Option<Mtu>{
+    match mtu {
+        1 => Some(Mtu::Mtu256),
+        2 => Some(Mtu::Mtu512),
+        3 => Some(Mtu::Mtu1024),
+        4 => Some(Mtu::Mtu2048),
+        5 => Some(Mtu::Mtu4096),
+        _ => None
+    }
+}
+

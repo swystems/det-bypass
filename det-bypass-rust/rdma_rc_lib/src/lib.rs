@@ -1,9 +1,9 @@
-use std::{process, time::{SystemTime, UNIX_EPOCH}};
+use std::{net::Ipv4Addr, process, time::{SystemTime, UNIX_EPOCH}};
 
 use std::io::Error;
-use common::persistence_agent::PersistenceAgent;
+use common::{persistence_agent::{PersistenceAgent, PingPongPayload}, utils};
 use ib_net::ib_device_find_by_name;
-use rdma::device;
+use pingpong_context::PingpongContext;
 
 mod ib_net;
 mod pingpong_context;
@@ -20,6 +20,23 @@ fn initialize_random_number_generator() -> u64 {
 }
 
 
+pub fn pp_send_single_packet(_: *mut u8, packet_id: u64, _: Ipv4Addr, aux: *mut u8 ){
+    let mut ctx = PingpongContext::new().unwrap();
+    let mut payload = PingPongPayload::new(packet_id);
+    payload.set_ts_value(1, utils::get_time_ns());
+    ctx.send_payload(PingPongPayload::new(packet_id));
+    ctx.post_send();
+}
+
+
+//int pp_send_single_packet (char *buf __unused, const uint64_t packet_id, struct sockaddr_ll *dest_addr __unused, void *aux)
+//{
+//    struct pingpong_context *ctx = (struct pingpong_context *) aux;
+//    *ctx->send_payload = new_pingpong_payload (packet_id);
+//    ctx->send_payload->ts[1] = get_time_ns ();
+//
+//    return pp_post_send (ctx, NULL);//(const uint8_t *) buf);
+//}
 
 pub fn run_client(ib_devname: &str, port_gid_idx: u32, iters: u64, interval: u64, server_ip: &str, pf: &str) -> Result<(), Error> {
     let persistence_flag = common::persistence_agent::pers_measurament_to_flag(pf);
