@@ -134,6 +134,34 @@ impl PingpongContext{
         })
     }
 
+    pub fn parse_single_wc(&mut self, available_recv: &mut u32) -> Result<(), Error>{
+        let status = self.cq.status();
+        let wr_id = self.cq.wr_id();
+        // let ts = self.cq.read_completion_ts();
+        if status != bindings::IBV_WC_SUCCESS{
+            println!("Failed: status {status} for wr_id {wr_id}");
+        }
+        match wr_id {
+            PINGPONG_SEND_WRID => println!("Sent packet"),
+            PINGPONG_RECV_WRID => {
+                println!("Received packet");
+                *available_recv -= 1;
+                if *available_recv <=1{
+                    *available_recv += self.post_recv(RECEIVE_DEPTH as u32 - *available_recv);
+                    if *available_recv < RECEIVE_DEPTH as u32{
+                        println!("Couldn't post enough receives, there are only {available_recv}");
+                        return Err(Error::new(ErrorKind::Other, "Couldn't post enough receives, there are only {available_recv}"));
+                    }
+                }
+            }
+            _ =>  println!("Completion for unknown wr_id {wr_id}")
+            
+        }
+        let wr_id = <u64 as std::convert::TryInto<u8>>::try_into(wr_id).unwrap();
+        self.pending.fetch_and(! wr_id, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
     pub fn send_payload(&mut self, payload: PingPongPayload){
         unsafe{
             *self.send_union.payload = payload;
@@ -176,22 +204,22 @@ impl PingpongContext{
         Ok(())
     }
 
-    pub fn post_recv(&self, n: u32) -> Result<(), Error>{
+    pub fn post_recv(&self, n: u32) -> u32{
         let sge = unsafe{Sge{addr: self.recv_union.buf as u64, length: PACKET_SIZE as u32, lkey: self.recv_mr.lkey()}}; 
         let mut wr = RecvRequest::zeroed();
         wr.id(PINGPONG_RECV_WRID);
         wr.sg_list(&[sge]);
-
-        for i in 0..n{
+        let mut i = 0;
+        while i< n{
             unsafe{
                 if let Ok(()) = self.qp.post_recv(&wr) {
                     println!("Posted {i} receives");
                     break
                 }
-            }   
+            } 
+            i+=1;
         }
-        
-        Ok(())
+        i    
     }
     
 
