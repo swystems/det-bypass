@@ -18,7 +18,7 @@ union PingPongContextUnion {
     payload: std::mem::ManuallyDrop<PingPongPayload>
 }
 
-pub struct PingpongContext {
+pub struct PingPongContext {
     pending: AtomicU8,
     send_flags: u32,
     recv_union: PingPongContextUnion,
@@ -33,7 +33,7 @@ pub struct PingpongContext {
     qpx: rdma::qp_ex::QueuePairEx 
 }
 
-impl Drop for PingpongContext{
+impl Drop for PingPongContext{
     fn drop(&mut self){
         unsafe{
             std::mem::ManuallyDrop::drop(&mut self.recv_union.payload);
@@ -46,8 +46,8 @@ impl Drop for PingpongContext{
 }
 
 
-impl PingpongContext{
-    pub fn new (device: & mut rdma::device::Device) -> Result<Self, std::io::Error>{
+impl PingPongContext{
+    pub fn new (device: & rdma::device::Device) -> Result<Self, std::io::Error>{
         let layout = Layout::from_size_align(PACKET_SIZE, std::mem::align_of::<u8>()).unwrap();
         let recv_buf: *mut u8 = unsafe { 
             alloc::alloc(layout) 
@@ -127,11 +127,23 @@ impl PingpongContext{
             Err(_) => return Err(Error::new(ErrorKind::Other, "Failed to modify QP to INIT"))
         };
 
-        Ok(PingpongContext{
+        Ok(PingPongContext{
             pending: 0.into(), send_flags: bindings::IBV_SEND_SIGNALED,
             recv_union: PingPongContextUnion{buf: recv_buf}, send_union: PingPongContextUnion{buf: send_buf},
             context, pd, completion_timestamp_mask, recv_mr, send_mr, cq, qp, qpx 
         })
+    }
+
+    pub fn context(&self) -> &rdma::ctx::Context {
+        &self.context
+    }
+    
+    pub fn qp_num(&self) -> u32{
+        self.qp.qp_num()
+    }
+    
+    pub fn set_pending(&mut self, val: u8){
+        self.pending.fetch_or(val, Ordering::Relaxed);
     }
 
     pub fn parse_single_wc(&mut self, available_recv: &mut u32) -> Result<(), Error>{

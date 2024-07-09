@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{io::{Error, ErrorKind}, time::SystemTime};
 
 pub fn get_time_ns() -> u64 {
     let duration = SystemTime::now()
@@ -22,4 +22,8 @@ pub fn pp_sleep(ns: u64){
     } else {
         std::thread::sleep(std::time::Duration::from_nanos(ns));
     }
+}
+
+pub fn new_error<T>(msg: &str) -> Result<T, Error>{
+    Err(Error::new(ErrorKind::Other, msg))
 }
