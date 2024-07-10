@@ -1,7 +1,7 @@
 use std::{alloc::Layout, fmt, io::{Error, ErrorKind}, sync::atomic::{AtomicU8, Ordering}};
 
 use std::alloc;
-use common::persistence_agent::PingPongPayload;
+use common::{persistence_agent::{PersistenceAgent, PingPongPayload}, utils};
 use rdma::{ah::AddressHandleOptions, bindings, device::Mtu, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp::{ModifyOptions, QueuePairState}, wr::{RecvRequest, Sge}};
 use crate::ib_net::IbNodeInfo; 
 
@@ -171,10 +171,10 @@ impl PingPongContext{
         self.pending.fetch_or(val, Ordering::Relaxed);
     }
 
-    pub fn parse_single_wc(&mut self, available_recv: &mut u32) -> Result<(), Error>{
+    pub fn parse_single_wc(&mut self, available_recv: &mut u32,  persistence: &mut Option<&mut PersistenceAgent>) -> Result<(), Error>{
         let status = self.cq.status();
         let wr_id = self.cq.wr_id();
-        // let ts = self.cq.read_completion_ts();
+        let ts = self.cq.read_completion_ts();
         if status != bindings::IBV_WC_SUCCESS{
             println!("Failed: status {status} for wr_id {wr_id}");
         }
@@ -182,6 +182,22 @@ impl PingPongContext{
             PINGPONG_SEND_WRID => println!("Sent packet"),
             PINGPONG_RECV_WRID => {
                 println!("Received packet");
+                match persistence{
+                    Some(persistence) => {
+                        unsafe{
+                            (*self.recv_union.payload).set_ts_value(3, utils::get_time_ns());
+                            persistence.write((*self.recv_union.payload).clone());
+                        }
+                    }
+                    None => {
+                        unsafe{
+                            (*self.send_union.payload) = (*self.recv_union.payload).clone();
+                            (*self.send_union.payload).set_ts_value(1, ts);
+                            (*self.send_union.payload).set_ts_value(2, utils::get_time_ns());
+                        }
+                        self.post_send()?
+                    }
+                }
                 *available_recv -= 1;
                 if *available_recv <=1{
                     *available_recv += self.post_recv(RECEIVE_DEPTH as u32 - *available_recv);

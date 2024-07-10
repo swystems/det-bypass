@@ -1,3 +1,3 @@
 [workspace]
-members = ["no_bypass_lib", "no_bypass_server", "no_bypass_client", "common", "rdma_rc_lib", "rdma_rc_client"]
+members = ["no_bypass_lib", "no_bypass_server", "no_bypass_client", "common", "rdma_rc_lib", "rdma_rc_client", "rdma_rc_server"]
 
