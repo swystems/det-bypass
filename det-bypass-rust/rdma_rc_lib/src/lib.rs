@@ -4,7 +4,7 @@ use std::io::Error;
 use common::{persistence_agent::{PersistenceAgent, PingPongPayload}, utils};
 use ib_net::{ib_device_find_by_name, IbNodeInfo};
 use pingpong_context::PingPongContext;
-use rdma::{bindings, device::Device};
+use rdma::{bindings, device::Device, poll_cq_attr::PollCQAttr};
 
 mod ib_net;
 mod pingpong_context;
@@ -78,39 +78,39 @@ pub fn run_client(ib_devname: &str, port_gid_idx: i32, iters: u64, interval: u64
     }
 
     ctx.set_pending(PING_PONG_RECV_WRID); 
-    let available_receive: u32 = ctx.post_recv(RECEIVE_DEPTH);
+    let mut available_receive: u32 = ctx.post_recv(RECEIVE_DEPTH);
 
-    let recv_count: u64 = 0;
-    let send_count: u64 = 0;
+    let mut recv_count: u64 = 0;
     
-    while(recv_count < iters){
-        let attr = PollCQAttr::empty();
+    while recv_count < iters {
+        let attr = PollCQAttr::new_empty();
         let mut res = ctx.start_poll(&attr); 
-        while res == ENOENT{
+        while let Err(pingpong_context::PollingError::ENOENT(_)) = res{
             res = ctx.start_poll(&attr);
         }
-        if res != 0{
+        if let Err(pingpong_context::PollingError::Other(_)) = res {
             println!("Failed to poll CQ");
             return utils::new_error("Failed to poll CQ");
         }
         let res = ctx.parse_single_wc(&mut available_receive);
-        match res {
-            Err(_) => {
-                println!("Failed to parse WC");
-                ctx.end_poll();
-                return utils::new_error("Failed to parse WC");
-            }
+        if res.is_err() {
+            println!("Failed to parse WC");
+            ctx.end_poll();
+            return utils::new_error("Failed to parse WC");
         }
         recv_count +=1;
-        let ret = ctx.next_poll();
-        if !ret {
-            ret = ctx.parse_single_wc(&mut available_receive);
-            if !ret{
-                recv_count += 1;
+        let mut ret = ctx.next_poll();
+        if let Ok(()) = ret {
+            let parse_ret = ctx.parse_single_wc(&mut available_receive);
+            match parse_ret{
+                Ok(_) => recv_count +=1,
+                Err(e) => {
+                    ret = Err(pingpong_context::PollingError::Other(e.to_string()));
+                } 
             }
         }
         ctx.end_poll();
-        if ret && ret != ENOENT{
+        if let Err(pingpong_context::PollingError::Other(_)) = ret {
             println!("Failed to poll CQ");
             return utils::new_error("Failed to poll CQ");
         }

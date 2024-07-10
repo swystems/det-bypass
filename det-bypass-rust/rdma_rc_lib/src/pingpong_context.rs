@@ -1,8 +1,8 @@
-use std::{alloc::Layout, io::{Error, ErrorKind}, sync::atomic::{AtomicU8, Ordering}};
+use std::{alloc::Layout, fmt, io::{Error, ErrorKind}, sync::atomic::{AtomicU8, Ordering}};
 
 use std::alloc;
 use common::persistence_agent::PingPongPayload;
-use rdma::{ah::AddressHandleOptions, bindings, device::Mtu, mr::AccessFlags, pd::ProtectionDomain, qp::{ModifyOptions, QueuePairState}, wr::{RecvRequest, Sge}};
+use rdma::{ah::AddressHandleOptions, bindings, device::Mtu, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp::{ModifyOptions, QueuePairState}, wr::{RecvRequest, Sge}};
 use crate::ib_net::IbNodeInfo; 
 
 
@@ -12,6 +12,31 @@ const IB_PORT: u8 = 1;
 const PINGPONG_RECV_WRID: u64 = 1;
 const PINGPONG_SEND_WRID: u64 = 2;
 
+
+#[derive(Debug)]
+pub enum PollingError{
+    ENOENT(String),
+    Other(String),
+}
+
+impl fmt::Display for PollingError{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PollingError::ENOENT(msg) => write!(f, "ENOENT: {msg}"),
+            PollingError::Other(msg) => write!(f, "{msg}") 
+        }
+    }
+}
+
+
+impl std::error::Error for PollingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PollingError::ENOENT(_) => None,
+            PollingError::Other(_) => None,
+        }
+    }
+}
 
 union PingPongContextUnion {
     buf: *mut u8,
@@ -179,6 +204,27 @@ impl PingPongContext{
             *self.send_union.payload = payload;
         }
     }
+
+    pub fn start_poll(&self, attr: &PollCQAttr) -> Result<(), PollingError>{
+        match self.cq.start_poll(attr){
+            0 => Ok(()),
+            libc::ENOENT => Err(PollingError::ENOENT("ENOENT encountered during poll starting.".to_string())),
+            err_code => Err(PollingError::Other(format!("Encountered an error with error code {err_code}").to_string()))
+        }
+    }
+
+    pub fn end_poll(&self){
+        self.cq.end_poll()
+    }
+
+    pub fn next_poll(&self) -> Result<(), PollingError>{
+        match self.cq.next_poll(){
+            0 => Ok(()),
+            libc::ENOENT => Err(PollingError::ENOENT("ENOENT encountered in next poll.".to_string())),
+            err_code => Err(PollingError::Other(format!("Encountered an error with error code {err_code}").to_string()))
+        }
+    }
+
 
     pub fn pp_ib_connect(&self, port: u8, local_psn: u32, mtu: Mtu, sl: u8, dest: &IbNodeInfo, gid_idx: u8) -> Result<(), Error>{
         let mut modify_options = ModifyOptions::default();
