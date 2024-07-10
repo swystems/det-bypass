@@ -5,7 +5,7 @@ use common::persistence_agent::PersistenceAgent;
 use common::persistence_agent::PingPongPayload;
 use common::utils;
 
-mod common_net;
+use common::common_net;
 
 
 const XDP_UPD_PORT: u16 = 1234;

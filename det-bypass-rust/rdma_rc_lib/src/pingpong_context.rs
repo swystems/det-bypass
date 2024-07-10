@@ -43,8 +43,24 @@ union PingPongContextUnion {
     payload: std::mem::ManuallyDrop<PingPongPayload>
 }
 
+
+impl Clone for PingPongContextUnion{
+    fn clone(&self) -> Self{
+        unsafe{
+            PingPongContextUnion{buf: self.buf}
+        }
+    }
+}
+
+
+unsafe impl Send for PingPongContextUnion{}
+
+unsafe impl Sync for PingPongContextUnion{}
+
+
+#[derive(Clone)]
 pub struct PingPongContext {
-    pending: AtomicU8,
+    // pending: AtomicU8,
     send_flags: u32,
     recv_union: PingPongContextUnion,
     send_union: PingPongContextUnion,
@@ -153,7 +169,7 @@ impl PingPongContext{
         };
 
         Ok(PingPongContext{
-            pending: 0.into(), send_flags: bindings::IBV_SEND_SIGNALED,
+            send_flags: bindings::IBV_SEND_SIGNALED,
             recv_union: PingPongContextUnion{buf: recv_buf}, send_union: PingPongContextUnion{buf: send_buf},
             context, pd, completion_timestamp_mask, recv_mr, send_mr, cq, qp, qpx 
         })
@@ -168,7 +184,7 @@ impl PingPongContext{
     }
     
     pub fn set_pending(&mut self, val: u8){
-        self.pending.fetch_or(val, Ordering::Relaxed);
+        //self.pending.fetch_or(val, Ordering::Relaxed);
     }
 
     pub fn parse_single_wc(&mut self, available_recv: &mut u32,  persistence: &mut Option<&mut PersistenceAgent>) -> Result<(), Error>{
@@ -211,11 +227,11 @@ impl PingPongContext{
             
         }
         let wr_id = <u64 as std::convert::TryInto<u8>>::try_into(wr_id).unwrap();
-        self.pending.fetch_and(! wr_id, std::sync::atomic::Ordering::Relaxed);
+        //self.pending.fetch_and(! wr_id, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
-    pub fn send_payload(&mut self, payload: PingPongPayload){
+    pub fn set_send_payload(&mut self, payload: PingPongPayload){
         unsafe{
             *self.send_union.payload = payload;
         }
@@ -309,7 +325,7 @@ impl PingPongContext{
             Ok(()) => (),
             Err(e) => return Err(e)
         };
-        self.pending.fetch_or(PINGPONG_SEND_WRID.try_into().unwrap(), Ordering::Relaxed);
+        // self.pending.fetch_or(PINGPONG_SEND_WRID.try_into().unwrap(), Ordering::Relaxed);
 
        Ok(()) 
     }

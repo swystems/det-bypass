@@ -71,3 +71,25 @@ pub fn start_sending_packets<F>(iters: u64, interval: u64, base_packet: Option<[
     let sender_data = SenderData::new(iters, interval, base_packet, socket, socket_addr, send_packet);
     thread::spawn(move || thread_send_packets(sender_data)) 
 }
+
+
+pub fn exchange_data(server_ip: Option<&str>, buffer: &[u8]) -> Result<(usize, [u8;1024]), std::io::Error>{
+    let socket_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1234);
+    let socket = std::net::UdpSocket::bind(socket_addr).unwrap();
+    let mut out_buffer = [0; 1024];
+    match server_ip{
+        Some(sip) => {
+            let server_addr = new_sockaddr(sip, 1234);
+            socket.send_to(buffer, server_addr)?;
+            let (size, _) = socket.recv_from(&mut out_buffer)?;
+            Ok((size, out_buffer))
+        }
+        None => {
+            let (size, client_addr) = socket.recv_from(&mut out_buffer)?;
+            socket.send_to(buffer, client_addr)?; 
+            Ok((size, out_buffer))
+        }
+    }
+}
+
+

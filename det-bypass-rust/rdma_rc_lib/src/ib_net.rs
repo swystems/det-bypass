@@ -4,9 +4,7 @@ use std::io::ErrorKind;
 use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
-use rdma::ctx::Context;
 use rdma::device;
-use rdma::bindings;
 use rdma::device::Gid;
 use rdma::device::LinkLayer;
 use rdma::device::PortAttr;
@@ -55,7 +53,34 @@ impl IbNodeInfo{
         
         Ok(IbNodeInfo{lid, gid, qpn: context.qp_num(), psn})
     }
-
+    
+    pub fn serialize(&self) -> [u8; 26]{
+        let lid = self.lid.to_le_bytes();
+        let qpn = self.qpn.to_le_bytes();
+        let psn = self.psn.to_le_bytes();
+        let gid = self.gid.as_bytes();
+        let mut res = [0; 26];
+        for i in 0..26{
+            if i < 2 {
+                res[i] = lid[i];
+            } else if i < 6{
+                res[i] = qpn[i-2];
+            } else if i< 10{
+                res[i] = psn[i-6];
+            } else {
+                res[i] = gid[i-10];
+            }
+        }
+        res
+    }
+    
+    pub fn deserialize(bytes: &[u8]) -> Self{
+        let lid = u16::from_le_bytes(bytes[..2].try_into().unwrap());
+        let qpn = u32::from_le_bytes(bytes[2..6].try_into().unwrap());
+        let psn = u32::from_le_bytes(bytes[6..10].try_into().unwrap());
+        let gid = Gid::from_bytes(bytes[10..26].try_into().unwrap());
+        IbNodeInfo{lid, qpn, psn, gid}
+    }
 
     pub fn print(&self){
         let res = self.gid.to_ipv6_addr(); 
