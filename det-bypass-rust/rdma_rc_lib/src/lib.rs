@@ -3,11 +3,13 @@ use std::{process, thread, time::{SystemTime, UNIX_EPOCH}};
 use std::io::Error;
 use common::{persistence_agent::{PersistenceAgent, PingPongPayload}, utils};
 use ib_net::{ib_device_find_by_name, IbNodeInfo};
-use pingpong_context::PingPongContext;
 use rdma::{bindings, device::Device, poll_cq_attr::PollCQAttr};
 
 mod ib_net;
 mod pingpong_context;
+mod ppc_ud;
+mod ppc_rc;
+
 
 const IB_MTU: u32 = bindings::IBV_MTU_1024; 
 const IB_PORT: u8 = 1;
@@ -26,7 +28,7 @@ fn initialize_random_number_generator() -> u64 {
 }
 
 
-pub fn pp_send_single_packet(packet_id: u64, context:  &mut PingPongContext){
+pub fn pp_send_single_packet(packet_id: u64, context:  &mut ppc_rc::RCContext){
     let mut payload = PingPongPayload::new(packet_id);
     payload.set_ts_value(1, utils::get_time_ns());
     context.set_send_payload(PingPongPayload::new(packet_id));
@@ -45,11 +47,7 @@ pub fn run_server(ib_devname: &str, port_gid_idx: i32, iters: u64) -> Result<(),
 pub fn run_client(ib_devname: &str, port_gid_idx: i32, iters: u64, interval: u64, server_ip: &str, pf: &str) -> Result<(), Error>{
     let persistence_flag = common::persistence_agent::pers_measurament_to_flag(pf);
     let mut persistence = PersistenceAgent::new(Some("rc.dat"), persistence_flag, &(interval as u32));
-    let mut ctx  = match initialize(ib_devname, port_gid_idx, Some(server_ip)){
-        Err(e) => return Err(e),
-        Ok( ctx) => ctx 
-    };
-
+    let mut ctx  =initialize(ib_devname, port_gid_idx, Some(server_ip))?;
     start_sending_packets(iters, interval, ctx.clone());
     
     poll(iters, &mut ctx, &mut Some(&mut persistence))?;
@@ -58,7 +56,7 @@ pub fn run_client(ib_devname: &str, port_gid_idx: i32, iters: u64, interval: u64
 }
 
 
-fn send_packets(iters: u64, interval: u64, mut context: pingpong_context::PingPongContext){
+fn send_packets(iters: u64, interval: u64, mut context: ppc_rc::RCContext){
     println!("sending packets {}", iters);
     for id in 1..=iters {
         println!("id is {id}");
@@ -75,12 +73,12 @@ fn send_packets(iters: u64, interval: u64, mut context: pingpong_context::PingPo
 }
 
 
-fn start_sending_packets(iters: u64, interval: u64, ctx: pingpong_context::PingPongContext) -> std::thread::JoinHandle<()> {
+fn start_sending_packets(iters: u64, interval: u64, ctx: ppc_rc::RCContext) -> std::thread::JoinHandle<()> {
     thread::spawn(move || send_packets(iters, interval, ctx))
 }
 
 
-fn initialize(ib_devname: &str, port_gid_idx: i32, server_ip: Option<&str>) -> Result<pingpong_context::PingPongContext, Error>{
+fn initialize(ib_devname: &str, port_gid_idx: i32, server_ip: Option<&str>) -> Result<ppc_rc::RCContext, Error>{
     let seed = initialize_random_number_generator();
 
     let device_list = rdma::device::DeviceList::available();
@@ -96,12 +94,12 @@ fn initialize(ib_devname: &str, port_gid_idx: i32, server_ip: Option<&str>) -> R
         _ => return utils::new_error("IB device {ib_devname} not found"),
     };
     
-    let ctx = match PingPongContext::new(device){
+    let ctx = match ppc_rc::RCContext::new(device){
         Ok(ctx) => ctx,
         _ => return utils::new_error("Couldn't initialize context")
     }; 
     
-    let local_info = match IbNodeInfo::new(&ctx, IB_PORT, port_gid_idx, seed){
+    let local_info = match IbNodeInfo::new(&ctx.base_context(), IB_PORT, port_gid_idx, seed){
         Ok(li) => li,
         _ => return utils::new_error("Couldn't get local info")
     };
@@ -122,7 +120,7 @@ fn initialize(ib_devname: &str, port_gid_idx: i32, server_ip: Option<&str>) -> R
 }
 
 
-fn poll(iters: u64, ctx: &mut pingpong_context::PingPongContext, persistence: &mut Option<&mut PersistenceAgent>) -> Result<(), Error>{
+fn poll(iters: u64, ctx: &mut ppc_rc::RCContext, persistence: &mut Option<&mut PersistenceAgent>) -> Result<(), Error>{
     let mut available_receive: u32 = ctx.post_recv(RECEIVE_DEPTH);
     let mut recv_count: u64 = 0;
     
@@ -162,5 +160,21 @@ fn poll(iters: u64, ctx: &mut pingpong_context::PingPongContext, persistence: &m
     Ok(())
 }
 
+
+
+pub fn run_client_ud(ib_devname: &str, port_gid_idx: i32, iters: u64, interval: u64, server_ip: &str, pf: &str) -> Result<(), Error>{
+    let persistence_flag = common::persistence_agent::pers_measurament_to_flag(pf);
+    let mut persistence = PersistenceAgent::new(Some("ud.dat"), persistence_flag, &(interval as u32));
+    let mut ctx  = match initialize(ib_devname, port_gid_idx, Some(server_ip)){
+        Err(e) => return Err(e),
+        Ok( ctx) => ctx 
+    };
+
+    start_sending_packets(iters, interval, ctx.clone());
+    
+    poll(iters, &mut ctx, &mut Some(&mut persistence))?;
+    persistence.close();
+    Ok(())
+}
 
 

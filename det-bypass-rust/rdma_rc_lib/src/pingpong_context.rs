@@ -1,16 +1,11 @@
-use std::{alloc::Layout, fmt, io::{Error, ErrorKind}, sync::atomic::{AtomicU8, Ordering}};
+use std::{fmt, io::{Error, ErrorKind} };
 
-use std::alloc;
-use common::{persistence_agent::{PersistenceAgent, PingPongPayload}, utils};
-use rdma::{ah::AddressHandleOptions, bindings, device::Mtu, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp::{ModifyOptions, QueuePairState}, wr::{RecvRequest, Sge}};
-use crate::ib_net::IbNodeInfo; 
+use common::persistence_agent::PingPongPayload;
+use rdma::{bindings, device::Mtu, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp::{ModifyOptions, QueuePairState}};
 
 
-const PACKET_SIZE: usize = 1024;
 const RECEIVE_DEPTH: usize = 500;
 const IB_PORT: u8 = 1;
-const PINGPONG_RECV_WRID: u64 = 1;
-const PINGPONG_SEND_WRID: u64 = 2;
 
 
 #[derive(Debug)]
@@ -38,71 +33,22 @@ impl std::error::Error for PollingError {
     }
 }
 
-union PingPongContextUnion {
-    buf: *mut u8,
-    payload: std::mem::ManuallyDrop<PingPongPayload>
-}
-
-
-impl Clone for PingPongContextUnion{
-    fn clone(&self) -> Self{
-        unsafe{
-            PingPongContextUnion{buf: self.buf}
-        }
-    }
-}
-
-
-unsafe impl Send for PingPongContextUnion{}
-
-unsafe impl Sync for PingPongContextUnion{}
-
 
 #[derive(Clone)]
 pub struct PingPongContext {
     // pending: AtomicU8,
-    send_flags: u32,
-    recv_union: PingPongContextUnion,
-    send_union: PingPongContextUnion,
     context: rdma::ctx::Context, 
     pd: rdma::pd::ProtectionDomain,
-    completion_timestamp_mask: u64,
-    recv_mr: rdma::mr::MemoryRegion,
-    send_mr: rdma::mr::MemoryRegion,
-    cq: rdma::cq::CompletionQueue, 
-    qp: rdma::qp::QueuePair, 
-    qpx: rdma::qp_ex::QueuePairEx 
+    pub(crate) recv_mr: rdma::mr::MemoryRegion,
+    pub(crate) send_mr: rdma::mr::MemoryRegion,
+    pub(crate) cq: rdma::cq::CompletionQueue, 
+    pub(crate) qp: rdma::qp::QueuePair, 
 }
 
-impl Drop for PingPongContext{
-    fn drop(&mut self){
-        unsafe{
-            std::mem::ManuallyDrop::drop(&mut self.recv_union.payload);
-            std::mem::ManuallyDrop::drop(&mut self.send_union.payload);
-            let layout = Layout::from_size_align(PACKET_SIZE, std::mem::align_of::<u8>()).unwrap();
-            alloc::dealloc(self.recv_union.buf, layout);
-            alloc::dealloc(self.send_union.buf, layout);
-        }
-    }
-}
 
 
 impl PingPongContext{
-    pub fn new (device: & rdma::device::Device) -> Result<Self, std::io::Error>{
-        let layout = Layout::from_size_align(PACKET_SIZE, std::mem::align_of::<u8>()).unwrap();
-        let recv_buf: *mut u8 = unsafe { 
-            alloc::alloc(layout) 
-        };
-        if recv_buf.is_null(){
-            return Err(Error::new(ErrorKind::Other, "Couldn't allocate memory for recv_buf"));
-        } 
-        let send_buf: *mut u8 = unsafe { 
-            alloc::alloc(layout) 
-        };
-        if send_buf.is_null(){
-            return Err(Error::new(ErrorKind::Other, "Couldn't allocate memory for send_buf"));
-        } 
-
+    pub fn new (device: & rdma::device::Device, recv_buf: *mut u8, send_buf: *mut u8, recv_size: usize, send_size: usize) -> Result<Self, std::io::Error>{
         let context = match device.open(){
             Ok(ctx) => ctx,
             Err(e) => return Err(e)
@@ -112,19 +58,15 @@ impl PingPongContext{
             Err(e) => return Err(e)
         };
 
-        let attrx: rdma::device::DeviceAttr = match rdma::device::DeviceAttr::query(&context){
-            Ok(att) => att,
-            Err(_) => return Err(Error::new(ErrorKind::Other, "Device doesn't support completion timestamping"))
-        }; 
-        let completion_timestamp_mask = attrx.completion_timestamp_mask();
+         
         let recv_mr = unsafe {
-            match rdma::mr::MemoryRegion::register(&pd, recv_buf, PACKET_SIZE, AccessFlags::LOCAL_WRITE, ()){
+            match rdma::mr::MemoryRegion::register(&pd, recv_buf, recv_size, AccessFlags::LOCAL_WRITE, ()){
                 Ok(mr) => mr,
                 Err(e) => return Err(e)
             }
         }; 
         let send_mr = unsafe {
-            match rdma::mr::MemoryRegion::register(&pd, send_buf, PACKET_SIZE, AccessFlags::LOCAL_WRITE, ()){
+            match rdma::mr::MemoryRegion::register(&pd, send_buf, send_size, AccessFlags::LOCAL_WRITE, ()){
                 Ok(mr) => mr,
                 Err(e) => return Err(e)
             }
@@ -152,10 +94,6 @@ impl PingPongContext{
             Err(_) => return Err(Error::new(ErrorKind::Other, "Couldn't create qp"))
         };
         
-        let qpx = match qp.to_qp_ex() {
-                Ok(qpx) => qpx,
-                Err(_) => return Err(Error::new(ErrorKind::Other, "Couldn't create qp_ex from qp"))
-        };
         
         let mut modify_options: ModifyOptions = ModifyOptions::default();
         modify_options.qp_state(QueuePairState::Initialize);
@@ -168,11 +106,7 @@ impl PingPongContext{
             Err(_) => return Err(Error::new(ErrorKind::Other, "Failed to modify QP to INIT"))
         };
 
-        Ok(PingPongContext{
-            send_flags: bindings::IBV_SEND_SIGNALED,
-            recv_union: PingPongContextUnion{buf: recv_buf}, send_union: PingPongContextUnion{buf: send_buf},
-            context, pd, completion_timestamp_mask, recv_mr, send_mr, cq, qp, qpx 
-        })
+        Ok(PingPongContext{context, pd, recv_mr, send_mr, cq, qp})
     }
 
     pub fn context(&self) -> &rdma::ctx::Context {
@@ -185,56 +119,6 @@ impl PingPongContext{
     
     pub fn set_pending(&mut self, val: u8){
         //self.pending.fetch_or(val, Ordering::Relaxed);
-    }
-
-    pub fn parse_single_wc(&mut self, available_recv: &mut u32,  persistence: &mut Option<&mut PersistenceAgent>) -> Result<(), Error>{
-        let status = self.cq.status();
-        let wr_id = self.cq.wr_id();
-        let ts = self.cq.read_completion_ts();
-        if status != bindings::IBV_WC_SUCCESS{
-            println!("Failed: status {status} for wr_id {wr_id}");
-        }
-        match wr_id {
-            PINGPONG_SEND_WRID => println!("Sent packet"),
-            PINGPONG_RECV_WRID => {
-                println!("Received packet");
-                match persistence{
-                    Some(persistence) => {
-                        unsafe{
-                            (*self.recv_union.payload).set_ts_value(3, utils::get_time_ns());
-                            persistence.write((*self.recv_union.payload).clone());
-                        }
-                    }
-                    None => {
-                        unsafe{
-                            (*self.send_union.payload) = (*self.recv_union.payload).clone();
-                            (*self.send_union.payload).set_ts_value(1, ts);
-                            (*self.send_union.payload).set_ts_value(2, utils::get_time_ns());
-                        }
-                        self.post_send()?
-                    }
-                }
-                *available_recv -= 1;
-                if *available_recv <=1{
-                    *available_recv += self.post_recv(RECEIVE_DEPTH as u32 - *available_recv);
-                    if *available_recv < RECEIVE_DEPTH as u32{
-                        println!("Couldn't post enough receives, there are only {available_recv}");
-                        return Err(Error::new(ErrorKind::Other, "Couldn't post enough receives, there are only {available_recv}"));
-                    }
-                }
-            }
-            _ =>  println!("Completion for unknown wr_id {wr_id}")
-            
-        }
-        let wr_id = <u64 as std::convert::TryInto<u8>>::try_into(wr_id).unwrap();
-        //self.pending.fetch_and(! wr_id, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-
-    pub fn set_send_payload(&mut self, payload: PingPongPayload){
-        unsafe{
-            *self.send_union.payload = payload;
-        }
     }
 
     pub fn start_poll(&self, attr: &PollCQAttr) -> Result<(), PollingError>{
@@ -255,79 +139,6 @@ impl PingPongContext{
             libc::ENOENT => Err(PollingError::ENOENT("ENOENT encountered in next poll.".to_string())),
             err_code => Err(PollingError::Other(format!("Encountered an error with error code {err_code}").to_string()))
         }
-    }
-
-
-    pub fn pp_ib_connect(&self, port: u8, local_psn: u32, mtu: Mtu, sl: u8, dest: &IbNodeInfo, gid_idx: u8) -> Result<(), Error>{
-        let mut modify_options = ModifyOptions::default();
-        modify_options.qp_state(QueuePairState::ReadyToReceive);
-        modify_options.path_mtu(mtu);
-        modify_options.dest_qp_num(dest.qpn);
-        modify_options.rq_psn(dest.psn);
-        modify_options.max_dest_rd_atomic(1);
-        modify_options.min_rnr_timer(12);
-        let mut ah_option = AddressHandleOptions::default();
-        ah_option.dest_lid(dest.lid);
-        ah_option.service_level(sl);
-        ah_option.port_num(port);
-        if dest.gid.interface_id() != 0 {
-            ah_option.global_route_header(rdma::ah::GlobalRoute { dest_gid: dest.gid, flow_label: 0,
-                sgid_index: gid_idx, hop_limit: 1, traffic_class: 0 });
-        }
-        modify_options.ah_attr(ah_option);
-        match self.qp.modify(modify_options){
-            Ok(_) => (),
-            Err(_) => return Err(Error::new(ErrorKind::Other, "Failed to modify QP to RTR"))
-        };
-
-        let mut modify_options = ModifyOptions::default(); 
-        modify_options.qp_state(QueuePairState::ReadyToSend);
-        modify_options.timeout(31);
-        modify_options.retry_cnt(7);
-        modify_options.rnr_retry(7);
-        modify_options.sq_psn(local_psn);
-        modify_options.max_rd_atomic(1);
-         match self.qp.modify(modify_options){
-            Ok(_) => (),
-            Err(_) => return Err(Error::new(ErrorKind::Other, "Failed to modify QP to RTS"))
-        };
-        Ok(())
-    }
-
-    pub fn post_recv(&self, n: u32) -> u32{
-        let sge = unsafe{Sge{addr: self.recv_union.buf as u64, length: PACKET_SIZE as u32, lkey: self.recv_mr.lkey()}}; 
-        let mut wr = RecvRequest::zeroed();
-        wr.id(PINGPONG_RECV_WRID);
-        wr.sg_list(&[sge]);
-        let mut i = 0;
-        while i< n{
-            unsafe{
-                if let Ok(()) = self.qp.post_recv(&wr) {
-                    println!("Posted {i} receives");
-                    break
-                }
-            } 
-            i+=1;
-        }
-        i    
-    }
-    
-
-    pub fn post_send(&mut self) -> Result<(), Error>{
-        self.qpx.start_wr(); 
-        self.qpx.wr_id(PINGPONG_SEND_WRID);
-        self.qpx.wr_flags(self.send_flags);
-        let _ = self.qpx.post_send();
-        
-        let buf = unsafe{self.send_union.buf};
-        self.qpx.set_sge(self.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
-        match self.qpx.wr_complete(){
-            Ok(()) => (),
-            Err(e) => return Err(e)
-        };
-        // self.pending.fetch_or(PINGPONG_SEND_WRID.try_into().unwrap(), Ordering::Relaxed);
-
-       Ok(()) 
     }
 }
 
