@@ -1,7 +1,6 @@
 use std::{fmt, io::{Error, ErrorKind} };
 
-use common::persistence_agent::PingPongPayload;
-use rdma::{bindings, device::Mtu, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp::{ModifyOptions, QueuePairState}};
+use rdma::{bindings, cq, device::{self, Mtu}, mr::AccessFlags, pd::{self, ProtectionDomain}, poll_cq_attr::PollCQAttr, qp::{self, ModifyOptions, QueuePairState}};
 
 
 const RECEIVE_DEPTH: usize = 500;
@@ -109,6 +108,10 @@ impl PingPongContext{
         Ok(PingPongContext{context, pd, recv_mr, send_mr, cq, qp})
     }
 
+    pub fn modify_qp(&mut self, options: qp::ModifyOptions) -> Result<(), std::io::Error> {
+        self.qp.modify(options)
+    }
+
     pub fn context(&self) -> &rdma::ctx::Context {
         &self.context
     }
@@ -153,3 +156,87 @@ pub fn u32_to_mtu(mtu: u32) -> Option<Mtu>{
     }
 }
 
+pub struct PPContextBuilder<'a>{
+    device: &'a device::Device,
+    recv_buf: Option<*mut u8>,
+    recv_size: Option<usize>,
+    send_buf: Option<*mut u8>,
+    send_size: Option<usize>,
+    use_pd: bool,
+    cq_options: Option<cq::CompletionQueueOptions>,
+    qp_options: Option<qp::QueuePairOptions>
+}
+
+impl <'a>PPContextBuilder<'a>{
+    pub fn new(device: &'a device::Device) -> PPContextBuilder<'a>{
+        PPContextBuilder{device, recv_buf: None, recv_size: None, send_buf: None, send_size:None, cq_options: None, qp_options: None, use_pd: false}
+    }
+
+    pub fn recv_buf(mut self, recv_buf: *mut u8, size: usize) -> PPContextBuilder<'a>{
+        self.recv_buf = Some(recv_buf);
+        self.recv_size = Some(size);
+        self
+    }
+
+    pub fn send_buf(mut self, send_buf: *mut u8, size: usize) -> PPContextBuilder<'a>{
+        self.send_buf = Some(send_buf);
+        self.send_size = Some(size);
+        self
+    }
+
+    pub fn with_cq(mut self, attr: cq::CompletionQueueOptions) -> PPContextBuilder<'a>{
+        self.cq_options = Some(attr);
+        self
+    } 
+
+    pub fn with_qp(mut self, attr: qp::QueuePairOptions, use_pd: bool) -> PPContextBuilder<'a>{
+        self.use_pd = use_pd;
+        self.qp_options = Some(attr);
+        self
+    }
+
+
+    pub fn build(self) -> Result<PingPongContext, std::io::Error>{
+         let context = match self.device.open(){
+            Ok(ctx) => ctx,
+            Err(e) => return Err(e)
+        };
+        let pd = match ProtectionDomain::alloc(&context){
+            Ok(prot_dom) => prot_dom,
+            Err(e) => return Err(e)
+        };
+
+         
+        let recv_mr = unsafe {
+            match rdma::mr::MemoryRegion::register(&pd, self.recv_buf.unwrap(), self.recv_size.unwrap(), AccessFlags::LOCAL_WRITE, ()){
+                Ok(mr) => mr,
+                Err(e) => return Err(e)
+            }
+        }; 
+        let send_mr = unsafe {
+            match rdma::mr::MemoryRegion::register(&pd, self.send_buf.unwrap(), self.send_size.unwrap(), AccessFlags::LOCAL_WRITE, ()){
+                Ok(mr) => mr,
+                Err(e) => return Err(e)
+            }
+        };
+
+        let cq_options = self.cq_options.unwrap_or(cq::CompletionQueueOptions::default());
+        let cq = match rdma::cq::CompletionQueue::create(&context, cq_options){ 
+            Ok(cq) => cq,
+            Err(e) => return Err(e)
+        };
+
+        let mut qp_options = self.qp_options.unwrap_or(qp::QueuePairOptions::default());
+        qp_options.send_cq(&cq);
+        qp_options.recv_cq(&cq);
+        if self.use_pd{
+            qp_options.pd(&pd);
+        }
+        let qp = match rdma::qp::QueuePair::create(&context, qp_options){
+            Ok(qp) => qp,
+            Err(_) => return Err(Error::new(ErrorKind::Other, "Couldn't create qp"))
+        };
+
+        Ok(PingPongContext{context, pd, recv_mr, send_mr, cq, qp}) 
+    }
+}

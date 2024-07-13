@@ -7,7 +7,7 @@ static OFFSET: u64 = 1000000;
 static PINGPONG_MAGIC: u32 =  0x8badbeef;
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PingPongPayload {
     pub id: u64,
     ts: [u64; 4],

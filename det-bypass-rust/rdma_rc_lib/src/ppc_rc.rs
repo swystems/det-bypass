@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicU8;
 
 use common::{persistence_agent::{self, PingPongPayload}, utils};
-use rdma::{ah, bindings, ctx, device, poll_cq_attr, qp, qp_ex, wr};
+use rdma::{ah, bindings, ctx, device, mr, poll_cq_attr, qp, qp_ex, wr};
 
 use crate::{ib_net, pingpong_context::{self, PingPongContext}};
 
@@ -9,6 +9,7 @@ const PACKET_SIZE: usize = 1024;
 const RECEIVE_DEPTH: usize = 500;
 const PINGPONG_RECV_WRID: u64 = 1;
 const PINGPONG_SEND_WRID: u64 = 2;
+const IB_PORT: u8 = 1;
 
 
 union PingPongContextUnion {
@@ -55,7 +56,33 @@ impl RCContext{
         if send_buf.is_null(){
             return utils::new_error("Couldn't allocate memory for send_buf");
         }
-        let base_context = PingPongContext::new(device, recv_buf, send_buf, PACKET_SIZE, PACKET_SIZE)?;
+        
+
+
+        let mut cq_options = rdma::cq::CompletionQueue::options();
+        cq_options.cqe(RECEIVE_DEPTH+1);
+        cq_options.wc_flags(bindings::IBV_WC_EX_WITH_COMPLETION_TIMESTAMP as u64);
+        let mut qp_options: rdma::qp::QueuePairOptions = rdma::qp::QueuePair::options();
+        qp_options.cap(rdma::qp::QueuePairCapacity{max_send_wr: 1, max_recv_wr: RECEIVE_DEPTH as u32, max_send_sge: 1, max_recv_sge: 1, max_inline_data: 0});
+        qp_options.qp_type(rdma::qp::QueuePairType::RC);
+        qp_options.comp_mask(bindings::IBV_QP_INIT_ATTR_PD | bindings::IBV_QP_INIT_ATTR_SEND_OPS_FLAGS);
+        qp_options.send_ops_flags(bindings::IBV_QP_EX_WITH_SEND);
+
+
+        let builder = pingpong_context::PPContextBuilder::new(device)
+            .recv_buf(recv_buf, PACKET_SIZE)
+            .send_buf(send_buf, PACKET_SIZE)
+            .with_cq(cq_options)
+            .with_qp(qp_options, true);
+
+        let mut base_context = builder.build()?;
+        let mut modify_options: qp::ModifyOptions = qp::ModifyOptions::default();
+        modify_options.qp_state(qp::QueuePairState::Initialize);
+        modify_options.pkey_index(0);
+        modify_options.port_num(IB_PORT);
+        modify_options.qp_access_flags(mr::AccessFlags::empty());
+
+        base_context.modify_qp(modify_options);
         //let pending = 0.into(); 
         let send_flags = bindings::IBV_SEND_SIGNALED;
         let context = device.open()?;
