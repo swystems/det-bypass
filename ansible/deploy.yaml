@@ -5,7 +5,7 @@
     - name: Upload source files
       #become: yes
       synchronize:
-        src: "{{ playbook_dir }}/.."
+        src: "../../"
         dest: "{{ base_dir }}"
         rsync_opts:
           - "--exclude=.*"

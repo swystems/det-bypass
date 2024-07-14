@@ -15,6 +15,10 @@ all:
         - rocep3s0f1
       ip: "10.10.1.2"
 
+  vars:
+    ansible_user: dvr0
+    base_dir: "/users/dvr0/det-bypass"
+
 # All experiments use xdp1 as tx node and xdp2 as rx node
 poll_tx:
   hosts:

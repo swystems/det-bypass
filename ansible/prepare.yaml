@@ -25,41 +25,43 @@
           - clang
           - git
           - tuned
+          - htop
+          - iperf3
 
-    - name: Update kernel to {{ kernel_version }}
-      block:
-        - name: Download ubuntu-mainline-kernel.sh
-          become: yes
-          get_url:
-            url: "https://raw.githubusercontent.com/pimlie/ubuntu-mainline-kernel.sh/master/ubuntu-mainline-kernel.sh"
-            dest: /opt/ubuntu-mainline-kernel.sh
-            mode: 0755
-        - name: Install kernel {{ kernel_version }}
-          become: yes
-          shell: |
-            /opt/ubuntu-mainline-kernel.sh -i {{ kernel_version }}
-        - name: Reboot the system
-          become: yes
-          reboot:
-        - name: Fix apt packages
-          become: yes
-          shell: |
-            apt --fix-broken install -y
+    # - name: Update kernel to {{ kernel_version }}
+    #   block:
+    #     - name: Download ubuntu-mainline-kernel.sh
+    #       become: yes
+    #       get_url:
+    #         url: "https://raw.githubusercontent.com/pimlie/ubuntu-mainline-kernel.sh/master/ubuntu-mainline-kernel.sh"
+    #         dest: /opt/ubuntu-mainline-kernel.sh
+    #         mode: 0755
+    #     - name: Install kernel {{ kernel_version }}
+    #       become: yes
+    #       shell: |
+    #         /opt/ubuntu-mainline-kernel.sh -i {{ kernel_version }}
+    #     - name: Reboot the system
+    #       become: yes
+    #       reboot:
+    #     - name: Fix apt packages
+    #       become: yes
+    #       shell: |
+    #         apt --fix-broken install -y
 
-    - name: Add /usr/local/lib to ldconfig
-      block:
-        - name: Add /usr/local/lib to ldconfig
-          become: yes
-          # make sure that /etc/ld.so.conf.d/local.conf exists and contains /usr/local/lib, /usr/local/lib64, and /usr/lib64
-          blockinfile:
-            path: /etc/ld.so.conf.d/local.conf
-            block: |
-              /usr/local/lib
-              /usr/local/lib64
-              /usr/lib64
-            state: present
-            create: yes
-        - name: Update ldconfig
-          become: yes
-          shell: |
-            ldconfig
+    # - name: Add /usr/local/lib to ldconfig
+    #   block:
+    #     - name: Add /usr/local/lib to ldconfig
+    #       become: yes
+    #       # make sure that /etc/ld.so.conf.d/local.conf exists and contains /usr/local/lib, /usr/local/lib64, and /usr/lib64
+    #       blockinfile:
+    #         path: /etc/ld.so.conf.d/local.conf
+    #         block: |
+    #           /usr/local/lib
+    #           /usr/local/lib64
+    #           /usr/lib64
+    #         state: present
+    #         create: yes
+    #     - name: Update ldconfig
+    #       become: yes
+    #       shell: |
+    #         ldconfig

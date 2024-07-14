@@ -1,0 +1,26 @@
+---
+- hosts: xdp1
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Download MLNX_OFED 24.04 ISO
+      get_url:
+        url: https://content.mellanox.com/ofed/MLNX_OFED-24.04-0.7.0.0/MLNX_OFED_LINUX-24.04-0.7.0.0-ubuntu22.04-x86_64.iso
+        dest: "$HOME"
+
+    - name: mount the ISO
+      shell: |
+        mount -o ro,loop MLNX_OFED_LINUX-24.04-0.7.0.0-ubuntu22.04-x86_64.iso /mnt
+      ignore_errors: yes
+
+    - name: Install MLNX_EN
+      shell: |
+        /mnt/mlnxofedinstall --force
+
+    - name: Load the new driver
+      shell: |
+        /etc/init.d/openibd restart 
+
+    - name: reboot the system
+      shell: |
+        reboot 
