@@ -37,7 +37,7 @@ impl std::error::Error for PollingError {
 pub struct PingPongContext {
     // pending: AtomicU8,
     context: rdma::ctx::Context, 
-    pd: rdma::pd::ProtectionDomain,
+    pub(crate) pd: rdma::pd::ProtectionDomain,
     pub(crate) recv_mr: rdma::mr::MemoryRegion,
     pub(crate) send_mr: rdma::mr::MemoryRegion,
     pub(crate) cq: rdma::cq::CompletionQueue, 

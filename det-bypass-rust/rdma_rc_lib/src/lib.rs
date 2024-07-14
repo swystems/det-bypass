@@ -99,7 +99,7 @@ fn initialize(ib_devname: &str, port_gid_idx: i32, server_ip: Option<&str>) -> R
         _ => return utils::new_error("Couldn't initialize context")
     }; 
     
-    let local_info = match IbNodeInfo::new(&ctx.base_context(), IB_PORT, port_gid_idx, seed){
+    let local_info = match IbNodeInfo::new(ctx.base_context(), IB_PORT, port_gid_idx, seed){
         Ok(li) => li,
         _ => return utils::new_error("Couldn't get local info")
     };
@@ -178,3 +178,25 @@ pub fn run_client_ud(ib_devname: &str, port_gid_idx: i32, iters: u64, interval: 
 }
 
 
+pub fn initialize_ud(ib_devname: &str, port_gid_idx: i32, server_ip: Option<&str>) -> Result<ppc_ud::UDContext, Error>{
+    let seed = initialize_random_number_generator();
+    let device_list = rdma::device::DeviceList::available()?;
+    
+    let device = ib_device_find_by_name(&device_list, ib_devname)?;
+    let device = match device {
+        Some(dev) => dev,
+        _ => return utils::new_error("IB device {ib_devname} not found")
+    };
+    let mut ctx = ppc_ud::UDContext::new(device)?;
+    let local_info = IbNodeInfo::new(ctx.base_context(), IB_PORT, port_gid_idx, seed)?;
+    let (_, buf) = common::common_net::exchange_data(server_ip, &local_info.serialize())?;
+    ctx.set_remote_info(IbNodeInfo::deserialize(&buf));
+    local_info.print();
+    match &ctx.remote_info{
+        Some(ri) => ri.print(),
+        None => ()
+    };
+
+    ctx.connect(port_gid_idx, &local_info)?;
+    Ok(ctx)
+}
