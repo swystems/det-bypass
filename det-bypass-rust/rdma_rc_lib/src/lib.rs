@@ -81,7 +81,7 @@ fn send_packets(iters: u64, interval: u64, mut context: ppc_rc::RCContext){
 }
 
 
-fn start_sending_packets<T>(iters: u64, interval: u64, ctx: ppc_rc::RCContext) -> std::thread::JoinHandle<()> {
+fn start_sending_packets(iters: u64, interval: u64, ctx: ppc_rc::RCContext) -> std::thread::JoinHandle<()> {
     thread::spawn(move || send_packets(iters, interval, ctx))
 }
 
