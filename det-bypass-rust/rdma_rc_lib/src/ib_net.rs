@@ -24,6 +24,7 @@ pub fn ib_device_find_by_name<'a>(device_list: &'a device::DeviceList, name: &st
 }
 
 
+#[derive(Clone)]
 pub struct IbNodeInfo {
     pub lid: u16,
     pub qpn: u32,

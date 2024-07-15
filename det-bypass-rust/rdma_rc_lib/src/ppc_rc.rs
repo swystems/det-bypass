@@ -1,9 +1,10 @@
-use std::sync::atomic::AtomicU8;
 
 use common::{persistence_agent::{self, PingPongPayload}, utils};
-use rdma::{ah, bindings, ctx, device, mr, poll_cq_attr, qp, qp_ex, wr};
+use rdma::{ah, bindings, device, mr, poll_cq_attr, qp, qp_ex, wr};
 
 use crate::{ib_net, pingpong_context::{self, PingPongContext}};
+use crate::post_context;
+use crate::post_context::PostContext;
 
 const PACKET_SIZE: usize = 1024;
 const RECEIVE_DEPTH: usize = 500;
@@ -35,7 +36,7 @@ pub struct RCContext{
     base_context: PingPongContext,
     //pending: AtomicU8,
     send_flags: u32,
-    completion_timestamp_mask: u64,
+    _completion_timestamp_mask: u64,
     qpx: qp_ex::QueuePairEx,
     recv_union: PingPongContextUnion,
     send_union: PingPongContextUnion
@@ -82,7 +83,7 @@ impl RCContext{
         modify_options.port_num(IB_PORT);
         modify_options.qp_access_flags(mr::AccessFlags::empty());
 
-        base_context.modify_qp(modify_options);
+        base_context.modify_qp(modify_options)?;
         //let pending = 0.into(); 
         let send_flags = bindings::IBV_SEND_SIGNALED;
         let context = device.open()?;
@@ -94,42 +95,21 @@ impl RCContext{
         let qpx = base_context.qp.to_qp_ex()?;
        
         Ok(RCContext{
-            base_context,  send_flags, completion_timestamp_mask,
+            base_context,  send_flags, _completion_timestamp_mask: completion_timestamp_mask,
             qpx, recv_union: PingPongContextUnion{buf: recv_buf},
             send_union: PingPongContextUnion{buf: send_buf}
         })
     }
 
-    pub fn set_send_payload(&mut self, payload: PingPongPayload){
-        unsafe{
-            *self.send_union.payload = payload;
-        }
-    }
-
-    pub fn post_send(&mut self) -> Result<(), std::io::Error>{
-        self.qpx.start_wr(); 
-        self.qpx.wr_id(PINGPONG_SEND_WRID);
-        self.qpx.wr_flags(self.send_flags);
-        let _ = self.qpx.post_send();
-        
-        let buf = unsafe{self.send_union.buf};
-        self.qpx.set_sge(self.base_context.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
-        match self.qpx.wr_complete(){
-            Ok(()) => (),
-            Err(e) => return Err(e)
-        };
-        // self.pending.fetch_or(PINGPONG_SEND_WRID.try_into().unwrap(), Ordering::Relaxed);
-
-       Ok(()) 
-    }
     
-    pub fn context(&self) -> &ctx::Context{
-        return self.base_context.context();
-    }
     
-    pub fn qp_num(&self) -> u32{
-        self.base_context.qp_num()
-    }
+    // pub fn context(&self) -> &ctx::Context{
+    //     return self.base_context.context();
+    // }
+    
+    // pub fn qp_num(&self) -> u32{
+    //     self.base_context.qp_num()
+    // }
     
     pub fn base_context(&self) -> &PingPongContext{
         &self.base_context
@@ -217,16 +197,16 @@ impl RCContext{
                     Some(persistence) => {
                         unsafe{
                             (*self.recv_union.payload).set_ts_value(3, utils::get_time_ns());
-                            persistence.write((*self.recv_union.payload).clone());
+                            persistence.write(*self.recv_union.payload);
                         }
                     }
                     None => {
                         unsafe{
-                            (*self.send_union.payload) = (*self.recv_union.payload).clone();
+                            (*self.send_union.payload) = *self.recv_union.payload;
                             (*self.send_union.payload).set_ts_value(1, ts);
                             (*self.send_union.payload).set_ts_value(2, utils::get_time_ns());
                         }
-                        self.post_send()?
+                        self.post_send(post_context::PostOptions{queue_idx: None, lkey:0, buf: std::ptr::null_mut()})?
                     }
                 }
                 *available_recv -= 1;
@@ -241,7 +221,7 @@ impl RCContext{
             _ =>  println!("Completion for unknown wr_id {wr_id}")
             
         }
-        let wr_id = <u64 as std::convert::TryInto<u8>>::try_into(wr_id).unwrap();
+        let _wr_id = <u64 as std::convert::TryInto<u8>>::try_into(wr_id).unwrap();
         //self.pending.fetch_and(! wr_id, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
@@ -249,3 +229,42 @@ impl RCContext{
 
 }
 
+impl post_context::PostContext for RCContext{
+    
+    fn set_send_payload(&mut self, payload: PingPongPayload){
+        unsafe{
+            *self.send_union.payload = payload;
+        }
+    }
+
+    fn post_send(&mut self, _options: post_context::PostOptions) -> Result<(), std::io::Error>{
+        self.qpx.start_wr(); 
+        self.qpx.wr_id(PINGPONG_SEND_WRID);
+        self.qpx.wr_flags(self.send_flags);
+        let _ = self.qpx.post_send();
+        
+        let buf = unsafe{self.send_union.buf};
+        self.qpx.set_sge(self.base_context.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
+        match self.qpx.wr_complete(){
+            Ok(()) => (),
+            Err(e) => return Err(e)
+        };
+        // self.pending.fetch_or(PINGPONG_SEND_WRID.try_into().unwrap(), Ordering::Relaxed);
+
+       Ok(()) 
+    }
+
+    fn base_context(&self) -> &PingPongContext {
+        &self.base_context
+    }
+
+    fn get_send_buf(&mut self) -> *mut u8 {
+        unsafe{
+            self.send_union.buf
+        }
+    }
+
+    fn set_pending_send_bit(&mut self, _bit: usize) {
+        
+    }
+}

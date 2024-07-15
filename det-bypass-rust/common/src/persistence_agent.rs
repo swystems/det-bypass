@@ -88,10 +88,10 @@ struct Bucket {
     abs_latency: u64
 }
 
-union BucketUnion {
-    ptr: *mut libc::c_void,
-    buckets:  std::mem::ManuallyDrop<[Bucket; NUM_BUCKETS as usize+2]>
-}
+// union BucketUnion {
+//     ptr: *mut libc::c_void,
+//     buckets:  std::mem::ManuallyDrop<[Bucket; NUM_BUCKETS as usize+2]>
+// }
 
 struct BucketData {
     tot_packets: u64,
@@ -115,7 +115,7 @@ struct PersBaseData {
 
 pub struct PersistenceAgent {
     data: PersBaseData,
-    flags: u32,
+    _flags: u32,
 
 }
 
@@ -143,13 +143,11 @@ fn persistence_init_buckets(init_aux: &u32) -> BucketData{
     let interval = *init_aux as u64;
     let min_values = Bucket{rel_latency: [u64::MAX; 4], abs_latency: u64::MAX};
     let max_values = Bucket{rel_latency: [0;4], abs_latency: 0};
-    let memory_size = bucket_compute_hugepage_size();
-    unsafe{
-        //let ptr: *mut libc::c_void = libc::mmap(core::ptr::null_mut(), memory_size as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS  , -1, 0);
-        //let union_data = BucketUnion{ ptr}; 
-        let buckets = [Bucket{rel_latency: [0;4], abs_latency: 0}; NUM_BUCKETS as usize +2];
-        BucketData{tot_packets: 0, send_interval: interval, min_values, max_values, prev_payload: None, buckets}
-    }
+    let _memory_size = bucket_compute_hugepage_size();
+    //let ptr: *mut libc::c_void = libc::mmap(core::ptr::null_mut(), memory_size as usize, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS  , -1, 0);
+    //let union_data = BucketUnion{ ptr}; 
+    let buckets = [Bucket{rel_latency: [0;4], abs_latency: 0}; NUM_BUCKETS as usize +2];
+    BucketData{tot_packets: 0, send_interval: interval, min_values, max_values, prev_payload: None, buckets}
 }
 
 
@@ -188,7 +186,7 @@ fn bucket_idx(val: u64, min: u64, max: u64) -> u64{
         return NUM_BUCKETS as u64 +1;
     }
     let bucket_size: u64 = (max-min)/NUM_BUCKETS as u64;
-    return (val-min)/bucket_size +1;
+    (val-min)/bucket_size +1
 }
 
 
@@ -252,13 +250,13 @@ impl  PersistenceAgent {
         if (flags & PERSISTENCE_M_MIN_MAX_LATENCY) != 0{
             let data = persistence_init_min_max_latency(); 
             let data = PersBaseData{ file, aux: Some(PData::Latency(data))}; 
-            return PersistenceAgent{flags, data};
+            PersistenceAgent{_flags: flags, data}
         } else if (flags & PERSISTENCE_M_BUCKETS) != 0 {
             let data = persistence_init_buckets(aux);
             let data = PersBaseData{file, aux: Some(PData::Bucket(data))};
-            return PersistenceAgent{flags, data};
+            return PersistenceAgent{_flags: flags, data};
         }else{
-            return PersistenceAgent{flags, data: PersBaseData{file, aux: None}};
+            return PersistenceAgent{_flags: flags, data: PersBaseData{file, aux: None}};
         }
     }
 
@@ -266,7 +264,7 @@ impl  PersistenceAgent {
         let latency = payload.compute_latency(); 
         if latency < lat.min {
             lat.min = latency;
-            lat.min_payload = Some(payload.clone());
+            lat.min_payload = Some(payload);
         }
         if latency > lat.max {
             lat.max = latency;
@@ -277,33 +275,33 @@ impl  PersistenceAgent {
     fn write_buckets(bucket_data: &mut BucketData, payload: PingPongPayload) -> Result<(), Error>{
         bucket_data.tot_packets+=1;
         if ! payload.is_valid(){
-            bucket_data.prev_payload = Some(payload.clone());
+            bucket_data.prev_payload = Some(payload);
             return Err(Error::new(std::io::ErrorKind::Other, "writing to bucket failed"));
         }
         if payload.id% 1_000_000 == 0{
             println!("{}", payload.id);
         }
         let mut ts_diff: [u64;4] = [0;4];
-        for i in 0..4{
+        for (i, item) in ts_diff.iter_mut().enumerate(){
             if let Some(prev_payload) = &bucket_data.prev_payload{
                 if payload.ts[i] < prev_payload.ts[i] {
                     eprintln!("ERROR: Timestamps are not monotonically increasing");
                     return Err(Error::new(std::io::ErrorKind::Other, "timestamps are not monotonically increasing"));
                 }
 
-                ts_diff[i] = payload.ts[i] - prev_payload.ts[i];
+                *item = payload.ts[i] - prev_payload.ts[i];
             }
         }
 
         let (rel_min, rel_max, abs_min, abs_max) = bucket_ranges(bucket_data.send_interval);
-        for i in 0..4 {
+        for (i, item) in ts_diff.iter().enumerate() {
             if ts_diff[i] < bucket_data.min_values.rel_latency[i] {
-                bucket_data.min_values.rel_latency[i] = ts_diff[i];
+                bucket_data.min_values.rel_latency[i] = *item;
             }
             if ts_diff[i] > bucket_data.max_values.rel_latency[i] {
-                bucket_data.max_values.rel_latency[i] = ts_diff[i];
+                bucket_data.max_values.rel_latency[i] = *item;
             }
-            let idx = bucket_idx(ts_diff[i], rel_min, rel_max);
+            let idx = bucket_idx(*item, rel_min, rel_max);
             bucket_data.buckets[idx as usize].rel_latency[i] += 1;
         }
         let abs_latency = payload.compute_latency();

@@ -1,19 +1,28 @@
-use crate::{ib_net, pingpong_context, IB_PORT, PRIORITY};
+use crate::{ib_net, pingpong_context};
 use common::{bitset, consts, persistence_agent, utils};
 use rdma::{ah, bindings, cq, device, qp::{self}, wc, wr};
+use crate::post_context;
+use crate::post_context::PostContext;
 
 const QUEUE_SIZE: usize = 128;
 const PACKET_SIZE: usize = 1024;
 
+#[derive(Clone)]
+pub(crate) struct SafePtr(pub *mut u8);
+unsafe impl Send for SafePtr{}
+unsafe impl Sync for SafePtr{}
+
+
+#[derive(Clone)]
 pub struct UDContext{
     base_context: pingpong_context::PingPongContext,
     pub(crate) pending_send: [u8; common::bitset::bitset_slots(QUEUE_SIZE)],
     send_flags: wr::SendFlags,
     ah: Option<ah::AddressHandle>,
     pub(crate) remote_info: Option<ib_net::IbNodeInfo>,
-    pub(crate) send_buf: *mut u8,
+    pub(crate) send_buf: SafePtr,
     send_payload: persistence_agent::PingPongPayload, 
-    recv_bufs: *mut u8,
+    recv_bufs: SafePtr,
     pub(crate) recv_payloads: [persistence_agent::PingPongPayload; QUEUE_SIZE]
 }
 
@@ -71,10 +80,10 @@ impl UDContext{
         let mut modify_options = qp::ModifyOptions::default();
         modify_options.qp_state(qp::QueuePairState::Initialize);
         modify_options.pkey_index(0);
-        modify_options.port_num(IB_PORT);
+        modify_options.port_num(consts::IB_PORT);
         modify_options.qkey(0x11111111);
         base_context.modify_qp(modify_options)?;
-        Ok(UDContext{base_context, send_flags, pending_send, recv_bufs, send_buf, recv_payloads, send_payload, remote_info: None, ah: None})
+        Ok(UDContext{base_context, send_flags, pending_send, recv_bufs: SafePtr(recv_bufs), send_buf:SafePtr(send_buf), recv_payloads, send_payload, remote_info: None, ah: None})
     }
 
     pub fn base_context(&self) ->  &pingpong_context::PingPongContext{
@@ -92,8 +101,8 @@ impl UDContext{
         };
         let mut ah_attr = ah::AddressHandleOptions::default();
         ah_attr.dest_lid(dest.lid);
-        ah_attr.port_num(IB_PORT);
-        ah_attr.service_level(PRIORITY);
+        ah_attr.port_num(consts::IB_PORT);
+        ah_attr.service_level(consts::PRIORITY);
         let mut attr = qp::ModifyOptions::default();
         attr.qp_state(qp::QueuePairState::ReadyToReceive);
         self.base_context.modify_qp(attr)?;
@@ -112,7 +121,8 @@ impl UDContext{
     }
 
     pub(crate) fn post_recv(&self, queue_index: usize) -> std::io::Result<()>{
-        let list = wr::Sge{addr: self.recv_bufs as u64*((queue_index*consts::PACKET_SIZE)as u64), length: consts::PACKET_SIZE as u32, lkey: self.base_context.recv_mr.lkey()};
+        let list = wr::Sge{addr: self.recv_bufs.0 as u64*((queue_index*consts::PACKET_SIZE)as u64),
+             length: consts::PACKET_SIZE as u32, lkey: self.base_context.recv_mr.lkey()};
         let mut wr = wr::RecvRequest::zeroed();
         wr.id((consts::QUEUE_SIZE+queue_index)as u64);
         wr.sg_list(&[list]);
@@ -124,36 +134,7 @@ impl UDContext{
         }
 
 
-    pub fn post_send(&mut self, queue_idx: Option<usize>, lkey: u32, buf: *mut u8) -> Result<(), std::io::Error>{
-        let remote = match &self.remote_info{
-            Some(ri) => ri,
-            None => {return utils::new_error("Remote info node must be set up when sending")}
-        };
-        let list = unsafe{wr::Sge{addr: buf.add(40) as u64, length: consts::PACKET_SIZE as u32-40, lkey}};
-        let mut wr = wr::SendRequest::zeroed();
-        let queue_idx = match queue_idx{
-            Some(q) => q,
-            None => 0
-        };
-        wr.id(queue_idx as u64);
-        wr.sg_list(&[list]);
-        wr.opcode(wr::Opcode::Send);
-        wr.send_flags(self.send_flags);
-        let ah = match &self.ah {
-            Some(ah) => ah,
-            None => {
-                return utils::new_error("AddressHandle must be set before sending")
-            }
-        };
-        wr.ud_ah(ah);
-        wr.ud_remote_qpn(remote.qpn);
-        wr.ud_remote_qkey(0x11111111);
-        bitset::bitset_set(&mut self.pending_send, queue_idx);
-        unsafe {
-            self.base_context.qp.post_send(&wr)?;
-        }
-        Ok(())
-    }
+    
 
     fn check_wc(wc: &mut wc::WorkCompletion) -> Result<(), std::io::Error>{
         if wc.status() != bindings::IBV_WC_SUCCESS{
@@ -199,14 +180,63 @@ impl UDContext{
         self.recv_payloads[queue_idx].set_ts_value(2, utils::get_time_ns());
         println!("Sending back packet {} for queue {}", self.recv_payloads[queue_idx].id, queue_idx);
         unsafe{
-            self.post_send(Some(queue_idx), self.base_context.recv_mr.lkey(), self.recv_bufs.add(queue_idx*consts::PACKET_SIZE))?;
+            let options = post_context::PostOptions{queue_idx: Some(queue_idx), lkey: self.base_context.recv_mr.lkey(), 
+                buf: self.recv_bufs.0.add(queue_idx*consts::PACKET_SIZE)};
+            self.post_send(options)?;
         }
         Ok(())
     }
 
-    pub(crate) fn set_send_payload(&mut self, payload: persistence_agent::PingPongPayload) {
-        self.send_payload = payload
-    }
+    
 }
 
 
+impl post_context::PostContext for UDContext{
+    
+    fn post_send(&mut self, options: post_context::PostOptions) -> Result<(), std::io::Error>{
+        let queue_idx = options.queue_idx;
+        let lkey = options.lkey;
+        let buf = options.buf;
+        let remote = match &self.remote_info{
+            Some(ri) => ri,
+            None => {return utils::new_error("Remote info node must be set up when sending")}
+        };
+        let list = unsafe{wr::Sge{addr: buf.add(40) as u64, length: consts::PACKET_SIZE as u32-40, lkey}};
+        let mut wr = wr::SendRequest::zeroed();
+        let queue_idx = queue_idx.unwrap_or(0);
+        wr.id(queue_idx as u64);
+        wr.sg_list(&[list]);
+        wr.opcode(wr::Opcode::Send);
+        wr.send_flags(self.send_flags);
+        let ah = match &self.ah {
+            Some(ah) => ah,
+            None => {
+                return utils::new_error("AddressHandle must be set before sending")
+            }
+        };
+        wr.ud_ah(ah);
+        wr.ud_remote_qpn(remote.qpn);
+        wr.ud_remote_qkey(0x11111111);
+        bitset::bitset_set(&mut self.pending_send, queue_idx);
+        unsafe {
+            self.base_context.qp.post_send(&wr)?;
+        }
+        Ok(())
+    }
+
+     fn set_send_payload(&mut self, payload: persistence_agent::PingPongPayload) {
+        self.send_payload = payload
+    }
+
+    fn base_context(&self) -> &pingpong_context::PingPongContext {
+        &self.base_context
+    }
+
+    fn get_send_buf(&mut self) -> *mut u8 {
+        self.send_buf.0
+    }
+
+    fn set_pending_send_bit(&mut self, bit: usize) {
+        bitset::bitset_set(&mut self.pending_send, bit)       
+    }
+}

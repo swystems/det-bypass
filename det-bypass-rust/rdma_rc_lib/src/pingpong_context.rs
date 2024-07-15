@@ -1,6 +1,6 @@
 use std::{fmt, io::{Error, ErrorKind} };
 
-use rdma::{bindings, cq, device::{self, Mtu}, mr::AccessFlags, pd::{self, ProtectionDomain}, poll_cq_attr::PollCQAttr, qp::{self, ModifyOptions, QueuePairState}};
+use rdma::{bindings, cq, device::{self, Mtu}, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp::{self, ModifyOptions, QueuePairState}};
 
 
 const RECEIVE_DEPTH: usize = 500;
@@ -9,14 +9,14 @@ const IB_PORT: u8 = 1;
 
 #[derive(Debug)]
 pub enum PollingError{
-    ENOENT(String),
+    Enoent(String),
     Other(String),
 }
 
 impl fmt::Display for PollingError{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PollingError::ENOENT(msg) => write!(f, "ENOENT: {msg}"),
+            PollingError::Enoent(msg) => write!(f, "ENOENT: {msg}"),
             PollingError::Other(msg) => write!(f, "{msg}") 
         }
     }
@@ -26,7 +26,7 @@ impl fmt::Display for PollingError{
 impl std::error::Error for PollingError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            PollingError::ENOENT(_) => None,
+            PollingError::Enoent(_) => None,
             PollingError::Other(_) => None,
         }
     }
@@ -120,14 +120,14 @@ impl PingPongContext{
         self.qp.qp_num()
     }
     
-    pub fn set_pending(&mut self, val: u8){
+    pub fn set_pending(&mut self, _val: u8){
         //self.pending.fetch_or(val, Ordering::Relaxed);
     }
 
     pub fn start_poll(&self, attr: &PollCQAttr) -> Result<(), PollingError>{
         match self.cq.start_poll(attr){
             0 => Ok(()),
-            libc::ENOENT => Err(PollingError::ENOENT("ENOENT encountered during poll starting.".to_string())),
+            libc::ENOENT => Err(PollingError::Enoent("ENOENT encountered during poll starting.".to_string())),
             err_code => Err(PollingError::Other(format!("Encountered an error with error code {err_code}").to_string()))
         }
     }
@@ -139,7 +139,7 @@ impl PingPongContext{
     pub fn next_poll(&self) -> Result<(), PollingError>{
         match self.cq.next_poll(){
             0 => Ok(()),
-            libc::ENOENT => Err(PollingError::ENOENT("ENOENT encountered in next poll.".to_string())),
+            libc::ENOENT => Err(PollingError::Enoent("ENOENT encountered in next poll.".to_string())),
             err_code => Err(PollingError::Other(format!("Encountered an error with error code {err_code}").to_string()))
         }
     }
@@ -220,13 +220,13 @@ impl <'a>PPContextBuilder<'a>{
             }
         };
 
-        let cq_options = self.cq_options.unwrap_or(cq::CompletionQueueOptions::default());
+        let cq_options = self.cq_options.unwrap_or_default();
         let cq = match rdma::cq::CompletionQueue::create(&context, cq_options){ 
             Ok(cq) => cq,
             Err(e) => return Err(e)
         };
 
-        let mut qp_options = self.qp_options.unwrap_or(qp::QueuePairOptions::default());
+        let mut qp_options = self.qp_options.unwrap_or_default();
         qp_options.send_cq(&cq);
         qp_options.recv_cq(&cq);
         if self.use_pd{

@@ -1,0 +1,8 @@
+[package]
+name = "rdma_ud_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.5.8"
+rdma_rc_lib = {path = "../rdma_rc_lib/"}

@@ -504,6 +504,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdma_ud_server"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "rdma_rc_lib",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

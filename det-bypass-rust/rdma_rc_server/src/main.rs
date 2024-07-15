@@ -9,6 +9,6 @@ fn main() {
     let ib_devname: &str = matches.get_one::<&String>("dev").unwrap();
     let gidx: i32 = *matches.get_one::<i32>("gidx").unwrap();
     let iters: u64 = *matches.get_one::<u64>("packets").unwrap();
-    let _ = rdma_rc_lib::run_server(ib_devname, gidx, iters);    
+    let _ = rdma_rc_lib::rc::run_server(ib_devname, gidx, iters);    
 }
 

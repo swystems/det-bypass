@@ -17,6 +17,6 @@ fn main() {
     let iters: u64 = *matches.get_one::<u64>("packets").unwrap_or(&1);
     let server_ip = matches.get_one::<&String>("server").unwrap();
     let persistence_flag = matches.get_one::<&String>("measurament").unwrap();
-    let _ = rdma_rc_lib::run_client(ib_devname, gidx, interval, iters, server_ip, persistence_flag);    
+    let _ = rdma_rc_lib::rc::run_client(ib_devname, gidx, interval, iters, server_ip, persistence_flag);    
 }
 

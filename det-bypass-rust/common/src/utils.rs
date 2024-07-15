@@ -14,7 +14,7 @@ pub fn pp_sleep(ns: u64){
         return;
     }
     // 1 ms
-    if ns < 1000_000 {
+    if ns < 1_000_000 {
         let start = get_time_ns();
         while get_time_ns() - start < ns {
             std::hint::spin_loop();
