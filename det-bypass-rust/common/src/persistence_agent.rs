@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{Error, Write};
 use std::path::Path;
+use std::boxed::Box;
 
 const NUM_BUCKETS: u32 = 20000;
 static OFFSET: u64 = 1000000;
@@ -104,7 +105,7 @@ struct BucketData {
 
 enum PData  {
     Latency(MinMaxLatencyData),
-    Bucket(BucketData)
+    Bucket(Box<BucketData>)
 }
 
 struct PersBaseData {
@@ -253,7 +254,7 @@ impl  PersistenceAgent {
             PersistenceAgent{_flags: flags, data}
         } else if (flags & PERSISTENCE_M_BUCKETS) != 0 {
             let data = persistence_init_buckets(aux);
-            let data = PersBaseData{file, aux: Some(PData::Bucket(data))};
+            let data = PersBaseData{file, aux: Some(PData::Bucket(Box::new(data)))};
             return PersistenceAgent{_flags: flags, data};
         }else{
             return PersistenceAgent{_flags: flags, data: PersBaseData{file, aux: None}};
