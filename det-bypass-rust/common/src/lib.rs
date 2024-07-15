@@ -8,8 +8,8 @@ pub mod consts;
 #[macro_export]
 macro_rules! barrier {
     () => {
-        unsafe { std::arch::asm!("" ,"memory", "volatile") }
-    };
+              unsafe{std::arch::asm!("", options(nomem, nostack, preserves_flags))}
+           };
 }
 
 #[macro_export]
