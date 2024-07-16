@@ -6,10 +6,8 @@ use crate::{ib_net, pingpong_context, post_context, ppc_rc};
 const IB_MTU: u32 = bindings::IBV_MTU_1024;
 
 pub fn run_server(ib_devname: &str, port_gid_idx: i32, iters: u64) -> Result<(), std::io::Error>{
-    let  mut ctx  = match initialize(ib_devname, port_gid_idx, None){
-        Err(e) => return Err(e),
-        Ok(ctx) =>  ctx
-    };
+    let  mut ctx  = initialize(ib_devname, port_gid_idx, None)?;
+  println!("after initialize");
     poll(iters, &mut ctx, &mut None)?;
     Ok(())
 }

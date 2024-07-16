@@ -11,6 +11,8 @@ fn main() {
     let ib_devname = matches.get_one::<String>("dev").expect("dev is a required argument");
     let gidx: i32 = *matches.get_one::<i32>("gidx").unwrap();
     let iters: u64 = *matches.get_one::<u64>("packets").unwrap_or(&1);
-    let _ = rdma_rc_lib::ud::run_server(ib_devname, gidx, iters);    
+    if let Err(e) = rdma_rc_lib::ud::run_server(ib_devname, gidx, iters){
+        println!("{e}")
+    } 
 }
 
