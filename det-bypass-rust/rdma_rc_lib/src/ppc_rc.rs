@@ -1,5 +1,5 @@
 
-use common::{persistence_agent::{self, PingPongPayload}, utils};
+use common::{consts, persistence_agent::{self, PingPongPayload}, utils};
 use rdma::{ah, bindings, device, mr, poll_cq_attr, qp, qp_ex, wr};
 
 use crate::{ib_net, pingpong_context::{self, PingPongContext}};
@@ -13,23 +13,6 @@ const PINGPONG_SEND_WRID: u64 = 2;
 const IB_PORT: u8 = 1;
 
 
-union PingPongContextUnion {
-    buf: *mut u8,
-    payload: std::mem::ManuallyDrop<PingPongPayload>
-}
-
-impl Clone for PingPongContextUnion{
-    fn clone(&self) -> Self{
-        unsafe{
-            PingPongContextUnion{buf: self.buf}
-        }
-    }
-}
-
-unsafe impl Send for PingPongContextUnion{}
-unsafe impl Sync for PingPongContextUnion{}
-
-
 
 #[derive(Clone)]
 pub struct RCContext{
@@ -38,27 +21,28 @@ pub struct RCContext{
     send_flags: u32,
     _completion_timestamp_mask: u64,
     qpx: qp_ex::QueuePairEx,
-    recv_union: PingPongContextUnion,
-    send_union: PingPongContextUnion
+    recv_buf: [u8;consts::PACKET_SIZE],
+    send_buf: [u8;consts::PACKET_SIZE]
 }
 
 impl RCContext{
     pub fn new(device: &device::Device)-> Result<Self, std::io::Error>{
         let layout = std::alloc::Layout::from_size_align(PACKET_SIZE, std::mem::align_of::<u8>()).unwrap();
-        let recv_buf: *mut u8 = unsafe { 
-            std::alloc::alloc(layout) 
-        };
-        if recv_buf.is_null(){
-            return utils::new_error("Couldn't allocate memory for recv_buf");
-        } 
-        let send_buf: *mut u8 = unsafe { 
-            std::alloc::alloc(layout) 
-        };
-        if send_buf.is_null(){
-            return utils::new_error("Couldn't allocate memory for send_buf");
-        }
+        // let recv_buf: *mut u8 = unsafe { 
+        //     std::alloc::alloc(layout) 
+        // };
+        // if recv_buf.is_null(){
+        //     return utils::new_error("Couldn't allocate memory for recv_buf");
+        // } 
+        // let send_buf: *mut u8 = unsafe { 
+        //     std::alloc::alloc(layout) 
+        // };
+        // if send_buf.is_null(){
+        //     return utils::new_error("Couldn't allocate memory for send_buf");
+        // }
         
-
+        let recv_buf = [0;consts::PACKET_SIZE];
+        let send_buf= [0;consts::PACKET_SIZE];
 
         let mut cq_options = rdma::cq::CompletionQueue::options();
         cq_options.cqe(RECEIVE_DEPTH+1);
@@ -96,8 +80,7 @@ impl RCContext{
        
         Ok(RCContext{
             base_context,  send_flags, _completion_timestamp_mask: completion_timestamp_mask,
-            qpx, recv_union: PingPongContextUnion{buf: recv_buf},
-            send_union: PingPongContextUnion{buf: send_buf}
+            qpx, recv_buf, send_buf 
         })
     }
 
@@ -152,15 +135,15 @@ impl RCContext{
         Ok(())
     }
 
-    pub fn post_recv(&self, n: u32) -> u32{
-        let sge = unsafe{wr::Sge{addr: self.recv_union.buf as u64, length: PACKET_SIZE as u32, lkey: self.base_context.recv_mr.lkey()}}; 
+    pub fn post_recv(&mut self, n: u32) -> u32{
+        let sge = wr::Sge{addr: self.recv_buf.as_mut_ptr() as u64, length: PACKET_SIZE as u32, lkey: self.base_context.recv_mr.lkey()}; 
         let mut wr = wr::RecvRequest::zeroed();
         wr.id(PINGPONG_RECV_WRID);
         wr.sg_list(&[sge]);
         let mut i = 0;
         while i< n{
             unsafe{
-                if let Ok(()) = self.base_context().qp.post_recv(&wr) {
+                if self.base_context().qp.post_recv(&wr).is_err() {
                     println!("Posted {i} receives");
                     break
                 }
@@ -196,17 +179,17 @@ impl RCContext{
                 println!("Received packet");
                 match persistence{
                     Some(persistence) => {
-                        unsafe{
-                            (*self.recv_union.payload).set_ts_value(3, utils::get_time_ns());
-                            persistence.write(*self.recv_union.payload);
-                        }
+                        // unsafe{
+                        //     (*self.recv_union.payload).set_ts_value(3, utils::get_time_ns());
+                        //     persistence.write(*self.recv_union.payload);
+                        // }
                     }
                     None => {
-                        unsafe{
-                            (*self.send_union.payload) = *self.recv_union.payload;
-                            (*self.send_union.payload).set_ts_value(1, ts);
-                            (*self.send_union.payload).set_ts_value(2, utils::get_time_ns());
-                        }
+                        // unsafe{
+                        //     (*self.send_union.payload) = *self.recv_union.payload;
+                        //     (*self.send_union.payload).set_ts_value(1, ts);
+                        //     (*self.send_union.payload).set_ts_value(2, utils::get_time_ns());
+                        // }
                         self.post_send(post_context::PostOptions{queue_idx: None, lkey:0, buf: std::ptr::null_mut()})?
                     }
                 }
@@ -235,9 +218,9 @@ impl RCContext{
 impl post_context::PostContext for RCContext{
     
     fn set_send_payload(&mut self, payload: PingPongPayload){
-        unsafe{
-            *self.send_union.payload = payload;
-        }
+        // unsafe{
+        //     *self.send_union.payload = payload;
+        // }
     }
 
     fn post_send(&mut self, options: post_context::PostOptions) -> Result<(), std::io::Error>{
@@ -246,7 +229,7 @@ impl post_context::PostContext for RCContext{
         self.qpx.wr_flags(self.send_flags);
         let _ = self.qpx.post_send();
         
-        let buf = if options.buf.is_null() {unsafe{self.send_union.buf}} else {options.buf};
+        let buf = if options.buf.is_null() {self.send_buf.as_mut_ptr()} else {options.buf};
         self.qpx.set_sge(self.base_context.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
         match self.qpx.wr_complete(){
             Ok(()) => (),
@@ -262,9 +245,7 @@ impl post_context::PostContext for RCContext{
     }
 
     fn get_send_buf(&mut self) -> *mut u8 {
-        unsafe{
-            self.send_union.buf
-        }
+            self.send_buf.as_mut_ptr()
     }
 
     fn set_pending_send_bit(&mut self, _bit: usize) {
