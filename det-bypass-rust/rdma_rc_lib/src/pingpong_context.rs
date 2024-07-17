@@ -1,4 +1,4 @@
-use std::{fmt, io::{Error, ErrorKind} };
+use std::fmt;
 use common::consts;
 use rdma::{cq, device::{self, Mtu}, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp};
 
@@ -132,34 +132,19 @@ impl <'a>PPContextBuilder<'a>{
 
 
     pub fn build(self) -> Result<PingPongContext, std::io::Error>{
-         let context = match self.device.open(){
-            Ok(ctx) => ctx,
-            Err(e) => return Err(e)
-        };
-        let pd = match ProtectionDomain::alloc(&context){
-            Ok(prot_dom) => prot_dom,
-            Err(e) => return Err(e)
-        };
+        let context = self.device.open()?;
+        let pd = ProtectionDomain::alloc(&context)?;
 
          
         let recv_mr = unsafe {
-            match rdma::mr::MemoryRegion::register(&pd, self.recv_buf.unwrap(), consts::PACKET_SIZE ,AccessFlags::LOCAL_WRITE, ()){
-                Ok(mr) => mr,
-                Err(e) => return Err(e)
-            }
+            rdma::mr::MemoryRegion::register(&pd, self.recv_buf.unwrap(), consts::PACKET_SIZE ,AccessFlags::LOCAL_WRITE, ())?
         }; 
         let send_mr = unsafe {
-            match rdma::mr::MemoryRegion::register(&pd, self.send_buf.unwrap(), consts::PACKET_SIZE, AccessFlags::LOCAL_WRITE, ()){
-                Ok(mr) => mr,
-                Err(e) => return Err(e)
-            }
+            rdma::mr::MemoryRegion::register(&pd, self.send_buf.unwrap(), consts::PACKET_SIZE, AccessFlags::LOCAL_WRITE, ())?
         };
 
         let cq_options = self.cq_options.unwrap_or_default();
-        let cq = match rdma::cq::CompletionQueue::create(&context, cq_options){ 
-            Ok(cq) => cq,
-            Err(e) => return Err(e)
-        };
+        let cq = rdma::cq::CompletionQueue::create(&context, cq_options)?; 
 
         let mut qp_options = self.qp_options.unwrap_or_default();
         qp_options.send_cq(&cq);
@@ -167,10 +152,7 @@ impl <'a>PPContextBuilder<'a>{
         if self.use_pd{
             qp_options.pd(&pd);
         }
-        let qp = match rdma::qp::QueuePair::create(&context, qp_options){
-            Ok(qp) => qp,
-            Err(_) => return Err(Error::new(ErrorKind::Other, "Couldn't create qp"))
-        };
+        let qp = rdma::qp::QueuePair::create(&context, qp_options)?;
 
         Ok(PingPongContext{context, pd, recv_mr, send_mr, cq, qp}) 
     }
