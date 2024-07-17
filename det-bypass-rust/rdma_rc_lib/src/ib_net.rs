@@ -1,6 +1,4 @@
-use std::io::Error;
-use std::io::ErrorKind;
-
+use common::utils;
 use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
@@ -43,7 +41,7 @@ impl IbNodeInfo{
         let lid = port_attr.lid();
         if port_attr.link_layer() != LinkLayer::Ethernet && lid ==0{
             eprintln!("Couldn't get local LID");
-            return Err(Error::new(ErrorKind::Other, "Couldn't get port info"));
+            return utils::new_error("Couldn't get port info");
         }
         let gid = match Gid::query(context.context(), ib_port, gidx){
             Ok(gid) => gid,

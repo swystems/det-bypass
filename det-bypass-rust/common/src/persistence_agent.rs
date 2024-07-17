@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{Error, Write};
+use std::io::Write;
 use std::path::Path;
 use std::boxed::Box;
 
@@ -273,11 +273,11 @@ impl  PersistenceAgent {
         }
     }
 
-    fn write_buckets(bucket_data: &mut BucketData, payload: PingPongPayload) -> Result<(), Error>{
+    fn write_buckets(bucket_data: &mut BucketData, payload: PingPongPayload) -> Result<(), std::io::Error>{
         bucket_data.tot_packets+=1;
         if ! payload.is_valid(){
             bucket_data.prev_payload = Some(payload);
-            return Err(Error::new(std::io::ErrorKind::Other, "writing to bucket failed"));
+            return crate::utils::new_error("writing to bucket failed");
         }
         if payload.id% 1_000_000 == 0{
             println!("{}", payload.id);
@@ -287,7 +287,7 @@ impl  PersistenceAgent {
             if let Some(prev_payload) = &bucket_data.prev_payload{
                 if payload.ts[i] < prev_payload.ts[i] {
                     eprintln!("ERROR: Timestamps are not monotonically increasing");
-                    return Err(Error::new(std::io::ErrorKind::Other, "timestamps are not monotonically increasing"));
+                    return crate::utils::new_error( "timestamps are not monotonically increasing");
                 }
 
                 *item = payload.ts[i] - prev_payload.ts[i];
