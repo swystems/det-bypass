@@ -72,11 +72,14 @@ fn poll(iters: u64, ctx: &mut ppc_rc::RCContext, persistence: &mut Option<&mut p
     let mut recv_count: u64 = 0;
     
     while recv_count < iters {
-        let attr = poll_cq_attr::PollCQAttr::new_empty();
-        let mut res = ctx.start_poll(&attr); 
+        let mut attr = poll_cq_attr::PollCQAttr::new_empty();
+        let mut res = ctx.start_poll(&mut attr); 
+        println!("inside first loop");
         while let Err(pingpong_context::PollingError::Enoent(_)) = res{
-            res = ctx.start_poll(&attr);
+            println!("{:?}", res);
+            res = ctx.start_poll(&mut attr);
         }
+        println!("after second loop");
         if let Err(pingpong_context::PollingError::Other(_)) = res {
             println!("Failed to poll CQ");
             return utils::new_error("Failed to poll CQ");

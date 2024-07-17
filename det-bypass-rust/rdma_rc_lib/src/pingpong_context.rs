@@ -1,5 +1,5 @@
 use std::{fmt, io::{Error, ErrorKind} };
-
+use common::consts;
 use rdma::{bindings, cq, device::{self, Mtu}, mr::AccessFlags, pd::ProtectionDomain, poll_cq_attr::PollCQAttr, qp::{self, ModifyOptions, QueuePairState}};
 
 
@@ -59,13 +59,13 @@ impl PingPongContext{
 
          
         let recv_mr = unsafe {
-            match rdma::mr::MemoryRegion::register(&pd, recv_buf, recv_size, AccessFlags::LOCAL_WRITE, ()){
+            match rdma::mr::MemoryRegion::register(&pd, recv_buf, consts::PACKET_SIZE, AccessFlags::LOCAL_WRITE, ()){
                 Ok(mr) => mr,
                 Err(e) => return Err(e)
             }
         }; 
         let send_mr = unsafe {
-            match rdma::mr::MemoryRegion::register(&pd, send_buf, send_size, AccessFlags::LOCAL_WRITE, ()){
+            match rdma::mr::MemoryRegion::register(&pd, send_buf, consts::PACKET_SIZE, AccessFlags::LOCAL_WRITE, ()){
                 Ok(mr) => mr,
                 Err(e) => return Err(e)
             }
@@ -124,7 +124,7 @@ impl PingPongContext{
         //self.pending.fetch_or(val, Ordering::Relaxed);
     }
 
-    pub fn start_poll(&self, attr: &PollCQAttr) -> Result<(), PollingError>{
+    pub fn start_poll(&self, attr: &mut PollCQAttr) -> Result<(), PollingError>{
         match self.cq.start_poll(attr){
             0 => Ok(()),
             libc::ENOENT => Err(PollingError::Enoent("ENOENT encountered during poll starting.".to_string())),

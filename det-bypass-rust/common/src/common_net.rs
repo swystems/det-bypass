@@ -74,7 +74,8 @@ pub fn start_sending_packets<F>(iters: u64, interval: u64, base_packet: Option<[
 
 
 pub fn exchange_data(server_ip: Option<&str>, buffer: &[u8]) -> Result<(usize, [u8;1024]), std::io::Error>{
-    let socket_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 1234);
+    let port = if server_ip.is_none() {1234} else {1235};
+    let socket_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
     let socket = std::net::UdpSocket::bind(socket_addr).unwrap();
     let mut out_buffer = [0; 1024];
     match server_ip{
@@ -85,6 +86,7 @@ pub fn exchange_data(server_ip: Option<&str>, buffer: &[u8]) -> Result<(usize, [
             Ok((size, out_buffer))
         }
         None => {
+            println!("before receive");
             let (size, client_addr) = socket.recv_from(&mut out_buffer)?;
             socket.send_to(buffer, client_addr)?; 
             Ok((size, out_buffer))

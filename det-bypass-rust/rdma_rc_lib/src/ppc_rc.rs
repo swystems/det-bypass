@@ -170,7 +170,7 @@ impl RCContext{
         i    
     }
     
-    pub fn start_poll(&self, attr: &poll_cq_attr::PollCQAttr) -> Result<(), pingpong_context::PollingError>{
+    pub fn start_poll(&self, attr: &mut poll_cq_attr::PollCQAttr) -> Result<(), pingpong_context::PollingError>{
         self.base_context.start_poll(attr)
     }
 
@@ -188,6 +188,7 @@ impl RCContext{
         let ts = self.base_context.cq.read_completion_ts();
         if status != bindings::IBV_WC_SUCCESS{
             println!("Failed: status {status} for wr_id {wr_id}");
+            return utils::new_error(format!("Failed: status {} for wr_id {}", status, wr_id).as_str());
         }
         match wr_id {
             PINGPONG_SEND_WRID => println!("Sent packet"),
@@ -211,7 +212,9 @@ impl RCContext{
                 }
                 *available_recv -= 1;
                 if *available_recv <=1{
+                    println!("before post_recv");
                     *available_recv += self.post_recv(RECEIVE_DEPTH as u32 - *available_recv);
+                    println!("after post_recv");
                     if *available_recv < RECEIVE_DEPTH as u32{
                         println!("Couldn't post enough receives, there are only {available_recv}");
                         return utils::new_error("Couldn't post enough receives, there are only {available_recv}");
@@ -237,13 +240,13 @@ impl post_context::PostContext for RCContext{
         }
     }
 
-    fn post_send(&mut self, _options: post_context::PostOptions) -> Result<(), std::io::Error>{
+    fn post_send(&mut self, options: post_context::PostOptions) -> Result<(), std::io::Error>{
         self.qpx.start_wr(); 
         self.qpx.wr_id(PINGPONG_SEND_WRID);
         self.qpx.wr_flags(self.send_flags);
         let _ = self.qpx.post_send();
         
-        let buf = unsafe{self.send_union.buf};
+        let buf = if options.buf.is_null() {unsafe{self.send_union.buf}} else {options.buf};
         self.qpx.set_sge(self.base_context.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
         match self.qpx.wr_complete(){
             Ok(()) => (),
