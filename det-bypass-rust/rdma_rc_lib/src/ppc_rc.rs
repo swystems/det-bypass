@@ -83,6 +83,7 @@ impl RCContext{
         modify_options.port_num(IB_PORT);
         modify_options.qp_access_flags(mr::AccessFlags::empty());
 
+        let qpx = base_context.qp.to_qp_ex()?;
         base_context.modify_qp(modify_options)?;
         //let pending = 0.into(); 
         let send_flags = bindings::IBV_SEND_SIGNALED;
@@ -92,7 +93,7 @@ impl RCContext{
             Err(_) => return utils::new_error("Device doesn't support completion timestamping") 
         }; 
         let completion_timestamp_mask = attrx.completion_timestamp_mask();
-        let qpx = base_context.qp.to_qp_ex()?;
+        
        
         Ok(RCContext{
             base_context,  send_flags, _completion_timestamp_mask: completion_timestamp_mask,
@@ -221,7 +222,9 @@ impl RCContext{
                     }
                 }
             }
-            _ =>  println!("Completion for unknown wr_id {wr_id}")
+            _ => {
+                     return utils::new_error("Completion for unknown wr_id {wr_id}");
+                 }
             
         }
         let _wr_id = <u64 as std::convert::TryInto<u8>>::try_into(wr_id).unwrap();
