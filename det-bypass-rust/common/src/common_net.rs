@@ -76,7 +76,7 @@ pub fn start_sending_packets<F>(iters: u64, interval: u64, base_packet: Option<[
 pub fn exchange_data(server_ip: Option<&str>, buffer: &[u8]) -> Result<(usize, [u8;1024]), std::io::Error>{
     let port = if server_ip.is_none() {1234} else {1235};
     let socket_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-    let socket = std::net::UdpSocket::bind(socket_addr).unwrap();
+    let socket = std::net::UdpSocket::bind(socket_addr)?;
     let mut out_buffer = [0; 1024];
     match server_ip{
         Some(sip) => {

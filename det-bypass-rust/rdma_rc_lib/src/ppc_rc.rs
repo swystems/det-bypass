@@ -71,6 +71,7 @@ impl RCContext{
         //let pending = 0.into(); 
         let send_flags = bindings::IBV_SEND_SIGNALED;
         let context = device.open()?;
+        // completion time stamp
         let attrx: rdma::device::DeviceAttr = match rdma::device::DeviceAttr::query(&context){
             Ok(att) => att,
             Err(_) => return utils::new_error("Device doesn't support completion timestamping") 
@@ -121,6 +122,7 @@ impl RCContext{
             Err(_) => return utils::new_error("Failed to modify QP to RTR")
         };
 
+        // TODO: resuse same options
         let mut modify_options = qp::ModifyOptions::default(); 
         modify_options.qp_state(qp::QueuePairState::ReadyToSend);
         modify_options.timeout(31);
@@ -204,6 +206,7 @@ impl RCContext{
                     }
                 }
             }
+            // TODO: return error.
             _ =>  println!("Completion for unknown wr_id {wr_id}")
             
         }

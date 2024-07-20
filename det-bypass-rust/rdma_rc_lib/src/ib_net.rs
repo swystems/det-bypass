@@ -24,6 +24,7 @@ pub fn ib_device_find_by_name<'a>(device_list: &'a device::DeviceList, name: &st
 
 #[derive(Clone)]
 pub struct IbNodeInfo {
+    // TODO: change to i32
     pub lid: u16,
     pub qpn: u32,
     pub psn: u32,
@@ -33,20 +34,14 @@ pub struct IbNodeInfo {
 
 impl IbNodeInfo{
     pub fn new(context:  &PingPongContext, ib_port: u8, gidx: i32, seed: u64) -> Result<Self, std::io::Error>{
-        let port_attr = match PortAttr::query(context.context(), ib_port){
-            Ok(pa) => pa,
-            Err(e) => return Err(e)
-        };
+        let port_attr = PortAttr::query(context.context(), ib_port)?;
 
         let lid = port_attr.lid();
         if port_attr.link_layer() != LinkLayer::Ethernet && lid ==0{
             eprintln!("Couldn't get local LID");
             return utils::new_error("Couldn't get port info");
         }
-        let gid = match Gid::query(context.context(), ib_port, gidx){
-            Ok(gid) => gid,
-            Err(e) => return Err(e)
-        };
+        let gid = Gid::query(context.context(), ib_port, gidx)?;
         let mut r = StdRng::seed_from_u64(seed);
         let psn = r.gen::<u32>() & 0xffffff; 
         
