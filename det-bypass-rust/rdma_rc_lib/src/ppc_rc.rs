@@ -46,15 +46,14 @@ pub struct RCContext{
 fn setup_memaligned_buffer(size: usize) -> Result<*mut u8, std::io::Error>{
     unsafe{
         let page_size=  libc::sysconf(libc::_SC_PAGESIZE);
-        let layout = std::alloc::Layout::from_size_align(size, page_size as usize).unwrap(); 
 
-        let buf = std::alloc::alloc(layout);
+        let buf = libc::memalign(page_size as usize, size);
         if buf.is_null() {
             return utils::new_error("Couldn't allocate aligned memory")
         }
 
-        std::ptr::write_bytes(buf, 0, size);
-        Ok(buf)
+        libc::memset(buf, 0, size);
+        Ok(buf as *mut u8)
     }
 }
 
