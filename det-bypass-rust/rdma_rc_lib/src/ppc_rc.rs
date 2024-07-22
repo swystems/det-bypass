@@ -5,7 +5,6 @@ use rdma::{ah, bindings, device, mr, poll_cq_attr, qp, qp_ex, wr};
 use crate::{ib_net, pingpong_context::{self, PingPongContext}};
 use crate::post_context;
 use crate::post_context::PostContext;
-use libc;
 
 const PACKET_SIZE: usize = 1024;
 const RECEIVE_DEPTH: usize = 500;
@@ -15,7 +14,7 @@ const IB_PORT: u8 = 1;
 
 
 union PingPongContextUnion {
-    buf: *mut libc::c_void,
+    buf: *mut u8,
     payload: std::mem::ManuallyDrop<PingPongPayload>
 }
 
@@ -43,6 +42,23 @@ pub struct RCContext{
     send_union: PingPongContextUnion
 }
 
+
+fn setup_memaligned_buffer(size: usize) -> Result<*mut u8, std::io::Error>{
+    unsafe{
+        let page_size=  libc::sysconf(libc::_SC_PAGESIZE);
+        let layout = std::alloc::Layout::from_size_align(size, page_size as usize).unwrap(); 
+
+        let buf = std::alloc::alloc(layout);
+        if buf.is_null() {
+            return utils::new_error("Couldn't allocate aligned memory")
+        }
+
+        std::ptr::write_bytes(buf, 0, size);
+        Ok(buf)
+    }
+}
+
+
 impl RCContext{
     pub fn new(device: &device::Device)-> Result<Self, std::io::Error>{
         // let layout = std::alloc::Layout::from_size_align(PACKET_SIZE, std::mem::align_of::<u8>()).unwrap();
@@ -59,8 +75,10 @@ impl RCContext{
         //     return utils::new_error("Couldn't allocate memory for send_buf");
         // }
         
-        let recv_buf = unsafe{ libc::malloc(consts::PACKET_SIZE)};
-        let send_buf = unsafe{libc::malloc(consts::PACKET_SIZE)};
+        // let recv_buf = unsafe{ libc::malloc(consts::PACKET_SIZE)};
+        // let send_buf = unsafe{libc::malloc(consts::PACKET_SIZE)};
+        let recv_buf = setup_memaligned_buffer(consts::PACKET_SIZE)?;
+        let send_buf = setup_memaligned_buffer(consts::PACKET_SIZE)?;
 
         let mut cq_options = rdma::cq::CompletionQueue::options();
         cq_options.cqe(RECEIVE_DEPTH+1);
@@ -251,7 +269,7 @@ impl post_context::PostContext for RCContext{
         self.qpx.wr_flags(self.send_flags);
         let _ = self.qpx.post_send();
         
-        let buf = if options.buf.is_null() {unsafe{self.send_union.buf as *mut u8}} else {options.buf};
+        let buf = if options.buf.is_null() {unsafe{self.send_union.buf}} else {options.buf};
         self.qpx.set_sge(self.base_context.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
         self.qpx.wr_complete()?;
         // self.pending.fetch_or(PINGPONG_SEND_WRID.try_into().unwrap(), Ordering::Relaxed);
@@ -265,7 +283,7 @@ impl post_context::PostContext for RCContext{
 
     fn get_send_buf(&mut self) -> *mut u8 {
         unsafe{
-            self.send_union.buf as *mut u8
+            self.send_union.buf 
         }
     }
 
