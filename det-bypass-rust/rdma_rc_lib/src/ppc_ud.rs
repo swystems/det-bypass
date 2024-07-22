@@ -57,8 +57,8 @@ impl UDContext{
         qp_options.qp_type(qp::QueuePairType::UD);
         
         let builder = pingpong_context::PPContextBuilder::new(device)
-            .recv_buf(recv_bufs, PACKET_SIZE*QUEUE_SIZE)
-            .send_buf(send_buf, PACKET_SIZE)
+            //.recv_buf(recv_bufs, PACKET_SIZE*QUEUE_SIZE)
+            //.send_buf(send_buf, PACKET_SIZE)
             .with_cq(cq_options)
             .with_qp(qp_options, false);
         let mut base_context = builder.build()?;

@@ -93,9 +93,9 @@ pub fn u32_to_mtu(mtu: u32) -> Option<Mtu>{
 
 pub struct PPContextBuilder<'a>{
     device: &'a device::Device,
-    recv_buf: Option<*mut u8>,
+    recv_buf: Option<*mut libc::c_void>,
     recv_size: Option<usize>,
-    send_buf: Option<*mut u8>,
+    send_buf: Option<*mut libc::c_void>,
     send_size: Option<usize>,
     use_pd: bool,
     cq_options: Option<cq::CompletionQueueOptions>,
@@ -107,13 +107,13 @@ impl <'a>PPContextBuilder<'a>{
         PPContextBuilder{device, recv_buf: None, recv_size: None, send_buf: None, send_size:None, cq_options: None, qp_options: None, use_pd: false}
     }
 
-    pub fn recv_buf(mut self, recv_buf: *mut u8, size: usize) -> PPContextBuilder<'a>{
+    pub fn recv_buf(mut self, recv_buf: *mut libc::c_void, size: usize) -> PPContextBuilder<'a>{
         self.recv_buf = Some(recv_buf);
         self.recv_size = Some(size);
         self
     }
 
-    pub fn send_buf(mut self, send_buf: *mut u8, size: usize) -> PPContextBuilder<'a>{
+    pub fn send_buf(mut self, send_buf: *mut libc::c_void, size: usize) -> PPContextBuilder<'a>{
         self.send_buf = Some(send_buf);
         self.send_size = Some(size);
         self
@@ -137,16 +137,16 @@ impl <'a>PPContextBuilder<'a>{
 
          
         let recv_mr = unsafe {
-            rdma::mr::MemoryRegion::register(&pd, self.recv_buf.unwrap(), consts::PACKET_SIZE ,AccessFlags::LOCAL_WRITE, ())?
+            rdma::mr::MemoryRegion::register(&pd, self.recv_buf.unwrap() as *mut u8, consts::PACKET_SIZE ,AccessFlags::LOCAL_WRITE, ())?
         }; 
         let send_mr = unsafe {
-            rdma::mr::MemoryRegion::register(&pd, self.send_buf.unwrap(), consts::PACKET_SIZE, AccessFlags::LOCAL_WRITE, ())?
+            rdma::mr::MemoryRegion::register(&pd, self.send_buf.unwrap() as *mut u8, consts::PACKET_SIZE, AccessFlags::LOCAL_WRITE, ())?
         };
 
-        let cq_options = self.cq_options.unwrap_or_default();
+        let cq_options = self.cq_options.unwrap();
         let cq = rdma::cq::CompletionQueue::create(&context, cq_options)?; 
 
-        let mut qp_options = self.qp_options.unwrap_or_default();
+        let mut qp_options = self.qp_options.unwrap();
         qp_options.send_cq(&cq);
         qp_options.recv_cq(&cq);
         if self.use_pd{
