@@ -137,10 +137,10 @@ impl <'a>PPContextBuilder<'a>{
 
          
         let recv_mr = unsafe {
-            rdma::mr::MemoryRegion::register(&pd, self.recv_buf.unwrap(), consts::PACKET_SIZE ,AccessFlags::LOCAL_WRITE, ())?
+            rdma::mr::MemoryRegion::register(&pd, self.recv_buf.unwrap(), consts::PACKET_SIZE , AccessFlags::all(), ())?
         }; 
         let send_mr = unsafe {
-            rdma::mr::MemoryRegion::register(&pd, self.send_buf.unwrap(), consts::PACKET_SIZE, AccessFlags::LOCAL_WRITE, ())?
+            rdma::mr::MemoryRegion::register(&pd, self.send_buf.unwrap(), consts::PACKET_SIZE, AccessFlags::all(), ())?
         };
 
         let cq_options = self.cq_options.unwrap();

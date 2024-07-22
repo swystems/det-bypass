@@ -57,11 +57,8 @@ fn initialize(ib_devname: &str, port_gid_idx: i32, server_ip: Option<&str>) -> R
     remote_info.print();
 
 
-    match ctx.pp_ib_connect(consts::IB_PORT, local_info.psn, pingpong_context::u32_to_mtu(IB_MTU).unwrap(), 
-        consts::PRIORITY, &remote_info, (port_gid_idx as usize).try_into().unwrap()){
-        Ok(()) => (),
-        _ => return utils::new_error("Couldn't connect")
-    }
+    ctx.pp_ib_connect(consts::IB_PORT, local_info.psn, pingpong_context::u32_to_mtu(IB_MTU).unwrap(), 
+        consts::PRIORITY, &remote_info, (port_gid_idx as usize).try_into().unwrap())?;
 
     Ok(ctx)
 }
