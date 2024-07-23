@@ -100,12 +100,12 @@ pub fn poll_server(iters: u64, ctx: &mut ppc_ud::UDContext)-> Result<(), std::io
 }
 
 
-pub fn send_single_packet<T: post_context::PostContext>(packet_id: u64, context: &mut T){
+pub fn send_single_packet<T: post_context::PostContext>(packet_id: u64, context: &mut T) -> Result<(), std::io::Error>{
     context.set_pending_send_bit(0);
     //bitset::bitset_set(&mut context.pending_send, 0);
     let  mut payload = persistence_agent::PingPongPayload::new(packet_id);
     payload.set_ts_value(0, utils::get_time_ns());
     context.set_send_payload(persistence_agent::PingPongPayload::new(packet_id));
     let options = post_context::PostOptions{queue_idx: None, lkey: context.base_context().recv_mr.lkey(), buf: context.get_send_buf()};
-    let _ = context.post_send(options);
+    context.post_send(options)
 }
