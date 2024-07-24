@@ -1,0 +1,13 @@
+[package]
+name = "performance"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+debug = true
+
+[dependencies]
+rdma = {path ="../../../rdma/crates/rdma/"}
+common = {path = "../common/"}
+clap = "4.5.8"
+sysinfo = "0.30.13"

@@ -34,7 +34,7 @@ fn send_packets<T, F>(iters: u64, interval: u64, mut context: T, fun: F) -> Resu
         println!("start {} now {}", start, utils::get_time_ns());
         let int = utils::get_time_ns() - start;
         if int < interval {
-            utils::pp_sleep(interval-int); 
+            utils::pp_sleep(interval-int, 10_000_000); 
         }
     }
     println!("finished sending packets");

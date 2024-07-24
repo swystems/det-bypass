@@ -53,7 +53,7 @@ fn thread_send_packets<F>(mut data: SenderData<F>)
         println!("start {} now {}", start, utils::get_time_ns());
         let interval = utils::get_time_ns() - start;
         if interval < data.interval {
-            utils::pp_sleep(data.interval-interval); 
+            utils::pp_sleep(data.interval-interval, 10_000_000); 
         }
     }
     println!("finished sending packets");

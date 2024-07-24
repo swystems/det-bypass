@@ -84,6 +84,7 @@ fn poll(iters: u64, ctx: &mut ppc_rc::RCContext, persistence: &mut Option<&mut p
             println!("Failed to poll CQ");
             return utils::new_error("Failed to poll CQ");
         }
+        println!("status: {}", ctx.base_context().cq.status());
         let res = ctx.parse_single_wc(&mut available_receive, persistence);
         if res.is_err() {
             println!("Failed to parse WC");
