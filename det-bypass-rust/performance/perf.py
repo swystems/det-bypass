@@ -27,11 +27,9 @@ def main():
             for k, v in data.items():
                 data[k].append(th_data[k])
         # print(data)
-        print(f"Results for interval {interval} are: ")
+        print(f"The results for an interval of {interval} are: ")
         dataframe = pd.DataFrame(data, index=thresholds)
         print(dataframe.to_latex())
-        print("")
-        print("")
         print("")
         
  
