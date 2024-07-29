@@ -29,9 +29,13 @@ fn main() {
     
     let avg = std::time::Duration::from_secs_f64(mean(&durations));
     let std = std::time::Duration::from_secs_f64(std(&durations));
+    let max = durations.iter().max();
+    let min = durations.iter().min();
     println!("Desired sleep duration of {sleep_time} nanoseconds: {attempts} runs");
     println!("Avg: {:?}", avg);
     println!("Std: {:?}", std);
+    println!("Max: {:?}", max.unwrap());
+    println!("Min: {:?}", min.unwrap());
 }
 
 fn mean(durations: &[std::time::Duration]) -> f64{

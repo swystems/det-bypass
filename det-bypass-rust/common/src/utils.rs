@@ -1,5 +1,4 @@
 use std::{io::{Error, ErrorKind}, time::SystemTime};
-use libc;
 
 pub fn get_time_ns() -> u64 {
     let duration = SystemTime::now()
@@ -23,12 +22,12 @@ pub fn pp_sleep(mut ns: u64, threshold: u64){
         // but given that thread::sleep might sleep for more than the requested time
         // it might not always be the case.
         let diff =  start.elapsed();
-        println!("diff {:?}", diff);
+       // println!("diff {:?}", diff);
         if diff.as_nanos() as u64 > ns{
             return;
         }
         ns -= diff.as_nanos() as u64;
-        println!("NS is {ns} {:?}", diff);
+        // println!("NS is {ns} {:?}", diff);
     }
     let new_start = get_time_ns();
     while get_time_ns() - new_start< ns {
