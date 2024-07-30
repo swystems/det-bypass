@@ -266,7 +266,7 @@ impl post_context::PostContext for RCContext{
         self.qpx.start_wr(); 
         self.qpx.wr_id(PINGPONG_SEND_WRID);
         self.qpx.wr_flags(self.send_flags);
-        let _ = self.qpx.post_send();
+        self.qpx.post_send()?;
         
         let buf = if options.buf.is_null() {unsafe{self.send_union.buf}} else {options.buf};
         self.qpx.set_sge(self.base_context.send_mr.lkey(), buf as u64, PACKET_SIZE as u32);
