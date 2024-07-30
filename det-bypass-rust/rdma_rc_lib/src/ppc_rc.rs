@@ -180,13 +180,13 @@ impl RCContext{
         let mut i = 0;
         while i< n{
             unsafe{
-                if let Ok(()) = self.base_context().qp.post_recv(&wr) {
-                    println!("Posted {i} receives");
+                if self.base_context().qp.post_recv(&wr).is_err() {
                     break
                 }
             } 
             i+=1;
         }
+        println!("Posted{i} receives");
         i    
     }
     
