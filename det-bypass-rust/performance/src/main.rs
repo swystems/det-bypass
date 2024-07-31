@@ -10,9 +10,7 @@ fn main() {
     let threshold = threshold.parse::<u64>().expect("String not parsable");
     let mut durations = Vec::new();
     let attempts = 1000;
-    let mut system = sysinfo::System::new_all();
-    system.refresh_all();
-    let initial_cpu_usage = system.global_cpu_info().cpu_usage();
+
     for _ in 0..attempts{
         let start = std::time::Instant::now();    
     
@@ -21,11 +19,6 @@ fn main() {
         durations.push(end);
         //println!("Time to sleep {}, Elapsed {:?}", sleep_time, end);
     }
-    system.refresh_all();
-    let final_cpu_usage = system.global_cpu_info().cpu_usage();
-
-    println!("Initial CPU usage: {:.2}%", initial_cpu_usage);
-    println!("Final CPU usage: {:.2}%", final_cpu_usage);
     
     let avg = std::time::Duration::from_secs_f64(mean(&durations));
     let std = std::time::Duration::from_secs_f64(std(&durations));
