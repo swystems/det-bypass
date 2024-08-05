@@ -1,0 +1,12 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/g++",
+      "-c",
+      "-std=c++17",
+      "sleep.cpp"
+    ],
+    "directory": "/home/jacob/det-bypass/sleep",
+    "file": "/home/jacob/det-bypass/sleep/sleep.cpp"
+  }
+]
