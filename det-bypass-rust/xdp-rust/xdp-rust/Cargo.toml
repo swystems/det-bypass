@@ -1,5 +1,5 @@
 [package]
-name = "xdp"
+name = "xdp-rust"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,7 +8,7 @@ publish = false
 aya = "0.12"
 aya-log = "0.2"
 clap = { version = "4.1", features = ["derive"] }
-xdp-common = { path = "../xdp-common", features = ["user"] }
+xdp-rust-common = { path = "../xdp-rust-common", features = ["user"] }
 anyhow = "1"
 env_logger = "0.10"
 libc = "0.2"
@@ -16,5 +16,5 @@ log = "0.4"
 tokio = { version = "1.25", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
 
 [[bin]]
-name = "xdp"
+name = "xdp-rust"
 path = "src/main.rs"

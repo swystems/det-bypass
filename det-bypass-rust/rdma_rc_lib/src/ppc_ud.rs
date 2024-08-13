@@ -21,9 +21,9 @@ pub struct UDContext{
     ah: Option<ah::AddressHandle>,
     pub(crate) remote_info: Option<ib_net::IbNodeInfo>,
     pub(crate) send_buf: SafePtr,
-    send_payload: persistence_agent::PingPongPayload, 
+    send_payload: pingpong::PingPongPayload, 
     recv_bufs: SafePtr,
-    pub(crate) recv_payloads: [persistence_agent::PingPongPayload; QUEUE_SIZE]
+    pub(crate) recv_payloads: [pingpong::PingPongPayload; QUEUE_SIZE]
 }
 
 
@@ -39,7 +39,7 @@ impl UDContext{
             return utils::new_error("Couldn't allocate send buffer");
         } 
 
-        let send_payload = persistence_agent::PingPongPayload::new_empty();
+        let send_payload = pingpong::PingPongPayload::new_empty();
         let layout = std::alloc::Layout::from_size_align(PACKET_SIZE*QUEUE_SIZE, std::mem::align_of::<u8>()).unwrap();
         let recv_bufs = unsafe {
             std::alloc::alloc(layout)
@@ -47,7 +47,7 @@ impl UDContext{
         if recv_bufs.is_null(){
             return utils::new_error("Couldn't allocate recv_buf");
         }
-        let recv_payloads = [persistence_agent::PingPongPayload::new_empty(); QUEUE_SIZE];
+        let recv_payloads = [pingpong::PingPongPayload::new_empty(); QUEUE_SIZE];
 
         let mut cq_options = cq::CompletionQueue::options();
         cq_options.cqe(QUEUE_SIZE);
@@ -224,7 +224,7 @@ impl post_context::PostContext for UDContext{
         Ok(())
     }
 
-     fn set_send_payload(&mut self, payload: persistence_agent::PingPongPayload) {
+     fn set_send_payload(&mut self, payload: pingpong::PingPongPayload) {
         self.send_payload = payload
     }
 

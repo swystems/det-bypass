@@ -1,15 +1,18 @@
 [package]
-name = "xdp-ebpf"
+name = "xdp-rust-ebpf"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 aya-ebpf = "0.1.0"
 aya-log-ebpf = "0.1.0"
-xdp-common = { path = "../xdp-common" }
+xdp-rust-common = { path = "../xdp-rust-common" }
+network-types = "*"
+pingpong= {path = "../../pingpong/"}
+
 
 [[bin]]
-name = "xdp"
+name = "xdp-rust"
 path = "src/main.rs"
 
 [profile.dev]

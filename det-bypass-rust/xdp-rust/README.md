@@ -1,4 +1,4 @@
-# xdp
+# xdp-rust
 
 ## Prerequisites
 
