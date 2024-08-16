@@ -60,7 +60,8 @@ async fn main() -> Result<(), anyhow::Error> {
     program.attach(&opt.iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
-   start_pingpong(0, &opt.server, opt.packets, &mut bpf, "map")?;
+    let index = unsafe{libc::if_nametoindex(opt.iface.as_ptr())};
+    start_pingpong(index, &opt.server, opt.packets, &mut bpf, "map")?;
      // start_pingpong(ifindex: u32, server_ip: &str, iters: u64, interval: u64, loaded_xdp_obj: & mut aya::Bpf, mapname: &str) 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;

@@ -23,7 +23,9 @@ struct Opt {
     #[clap(short, long)]
     interval: u64,
     #[clap(short, long)]
-    packets: u64
+    packets: u64,
+    #[clap(short, long)]
+    measurament: String
 }
 
 #[tokio::main]
@@ -64,7 +66,10 @@ async fn main() -> Result<(), anyhow::Error> {
     program.attach(&opt.iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
-   start_pingpong(0, &opt.server, opt.packets, opt.interval, &mut bpf, "map")?;
+    let persistence_flag = common::persistence_agent::pers_measurament_to_flag(&opt.measurament);
+    let persistence = common::persistence_agent::PersistenceAgent::new(Some("pingpong.dat"), persistence_flag, &(opt.interval as u32));
+    let index = unsafe{libc::if_nametoindex(opt.iface.as_ptr())};
+    start_pingpong(index, &opt.server, opt.packets, opt.interval, &mut bpf, "map", persistence)?;
      // start_pingpong(ifindex: u32, server_ip: &str, iters: u64, interval: u64, loaded_xdp_obj: & mut aya::Bpf, mapname: &str) 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
@@ -131,7 +136,7 @@ pub fn start_client(iters: u64, interval: u64, map_ptr: aya::maps::Array<&mut ay
 
 
 
-pub fn start_pingpong(ifindex: u32, server_ip: &str, iters: u64, interval: u64, loaded_xdp_obj: & mut aya::Bpf, mapname: &str) -> Result<(), std::io::Error> {
+pub fn start_pingpong(ifindex: u32, server_ip: &str, iters: u64, interval: u64, loaded_xdp_obj: & mut aya::Bpf, mapname: &str, pa: common::persistence_agent::PersistenceAgent) -> Result<(), std::io::Error> {
     println!("Exchanging addresses..");
     let (src_mac, src_ip, dest_mac, dest_ip) = crate::common_net::exchange_eth_ip_addresses(ifindex, Some(server_ip))?;
     println!("Ok");
@@ -145,7 +150,6 @@ pub fn start_pingpong(ifindex: u32, server_ip: &str, iters: u64, interval: u64, 
     };
     let buf: [u8; consts::PACKET_SIZE] = common_net::build_base_packet(src_mac,src_ip ,dest_mac ,dest_ip);
     let sock_addr = common_net::build_sockaddr(ifindex as i32, dest_mac);
-    let pa = PersistenceAgent::new(Some("robe"), 0, &0);
     start_client(iters, interval, map_array,pa, buf, sock_addr)?;
     Ok(())
 }
