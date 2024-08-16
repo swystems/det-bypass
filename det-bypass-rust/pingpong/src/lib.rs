@@ -3,7 +3,8 @@
 pub static PINGPONG_MAGIC: u32 =  0x8badbeef;
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
 pub struct PingPongPayload {
     pub id: u64,
     pub ts: [u64; 4],
