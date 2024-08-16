@@ -183,7 +183,7 @@ pub fn send_packet(mut buf: [u8; consts::PACKET_SIZE], id: u64, server_addr: lib
         payload.ts[0] = utils::get_time_ns();
         buf[network_types::eth::EthHdr::LEN+network_types::ip::Ipv4Hdr::LEN..].copy_from_slice(&payload.serialize());
         let addr = &server_addr as *const libc::sockaddr_ll as *const libc::sockaddr;
-        let res = libc::sendto(socket, buf.as_ptr() as *const std::ffi::c_void, consts::PACKET_SIZE,0, addr, 0 );
+        let res = libc::sendto(socket, buf.as_ptr() as *const std::ffi::c_void, consts::PACKET_SIZE,0, addr, std::mem::size_of::<libc::sockaddr_ll>() as u32);
         if res != 0{
             return utils::new_error("Sendto failed");
         }
