@@ -17,6 +17,8 @@ tokio = { version = "1.25", features = ["macros", "rt", "rt-multi-thread", "net"
 xsk-rs = {git = "https://github.com/JacobSalvi/xsk-rs.git"}
 common = {path = "../../common/"}
 libxdp-sys = {package ="libxdp", git = "https://github.com/JacobSalvi/libxdp/"}
+network-types = "*"
+pingpong = {path ="../../pingpong/"}
 
 [[bin]]
 name = "xsk-pingpong"

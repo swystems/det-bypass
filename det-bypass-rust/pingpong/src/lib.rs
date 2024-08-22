@@ -14,6 +14,11 @@ pub struct PingPongPayload {
 
 
 impl PingPongPayload{
+    pub const LEN: usize = core::mem::size_of::<PingPongPayload>();
+}
+
+
+impl PingPongPayload{
     pub fn new(id: u64) -> PingPongPayload{
         PingPongPayload{id, phase:0, ts: [0;4], magic: PINGPONG_MAGIC}
     }

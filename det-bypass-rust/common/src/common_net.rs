@@ -194,6 +194,30 @@ pub fn exchange_eth_ip_addresses(ifindex: u32, server_ip: Option<&str>) -> Resul
 }
 
 
+pub fn get_eth_ip(src_mac: [u8; 6], src_ip: u32, dest_mac: [u8;6], dest_ip: u32) -> (network_types::eth::EthHdr, network_types::ip::Ipv4Hdr){
+    let eth = network_types::eth::EthHdr{dst_addr: dest_mac, src_addr: src_mac, ether_type: network_types::eth::EtherType::Loop};
+    unsafe{
+        let eth_ptr = &eth as *const network_types::eth::EthHdr;
+        let ether_type_ptr = eth_ptr.cast::<u8>().add(offset_of!(network_types::eth::EthHdr, ether_type)) as *mut u16;
+        *ether_type_ptr = consts::ETH_P_PINGPONG;
+    }
+    let ip= network_types::ip::Ipv4Hdr{
+        _bitfield_align_1: [],
+        _bitfield_1: network_types::bitfield::BitfieldUnit::new([0;1]),
+        tos: 0,
+        tot_len: 0,
+        id:0,
+        frag_off:0,
+        ttl: 64,
+        proto: network_types::ip::IpProto::Reserved,
+        check: 0,
+        src_addr: src_ip,
+        dst_addr: dest_ip
+    };
+    (eth, ip)
+}
+
+
 pub fn build_base_packet(src_mac: [u8; 6], src_ip: u32, dest_mac: [u8;6], dest_ip: u32) -> [u8;consts::PACKET_SIZE]{
     let mut buf = [0u8; consts::PACKET_SIZE];    
     // eth packet

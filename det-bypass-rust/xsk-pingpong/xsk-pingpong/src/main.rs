@@ -7,7 +7,7 @@ use log::{info, warn, debug};
 use libc;
 use tokio::signal;
 use xsk_rs;
-use std::borrow::Borrow;
+use pingpong::PingPongPayload;
 
 
 const NUM_FRAMES: usize = 4096;
@@ -57,6 +57,7 @@ impl Config {
 #[derive(Clone)]
 struct XskUmemInfo {
     umem: xsk_rs::Umem,
+    buffer: [u8;common::consts::PACKET_SIZE]
     // struct xsk_ring_prod fq;
     // struct xsk_ring_cons cq;
     // struct xsk_umem *umem;
@@ -65,27 +66,30 @@ struct XskUmemInfo {
 
 impl XskUmemInfo{
     pub fn new(umem: xsk_rs::Umem) -> Self{
-        XskUmemInfo{umem}
+        XskUmemInfo{umem, buffer: [0;common::consts::PACKET_SIZE]}
     }
 }
 
 #[repr(C)]
 struct XskSocketInfo {
-    xsk: xsk_rs::Socket,
-    umem_frame_addr: [u64; NUM_FRAMES],
-    umem_frame_free: usize,
-    outstanding_tx: u32,
-    umem: XskUmemInfo,
-    xsk_client_lock: std::sync::Mutex<()>
+    pub xsk: xsk_rs::Socket,
+    pub tx: xsk_rs::TxQueue,
+    pub rx: xsk_rs::RxQueue,
+    pub fq: xsk_rs::FillQueue,
+    pub umem_frame_addr: [u64; NUM_FRAMES],
+    pub umem_frame_free: usize,
+    pub outstanding_tx: u32,
+    pub umem: XskUmemInfo,
+    pub xsk_client_lock: std::sync::Mutex<()>
 }
 
 impl XskSocketInfo{
-    pub fn new(lock: std::sync::Mutex<()>, xsk: xsk_rs::Socket, umem: XskUmemInfo) -> Self{
+    pub fn new(lock: std::sync::Mutex<()>, xsk: xsk_rs::Socket,tx: xsk_rs::TxQueue, rx: xsk_rs::RxQueue, fq: xsk_rs::FillQueue, umem: XskUmemInfo) -> Self{
         XskSocketInfo{xsk, umem_frame_addr: [0u64; NUM_FRAMES],
              umem_frame_free: 0, outstanding_tx: 0, umem,
+             tx, rx, fq,
              xsk_client_lock: lock
          }
-        
     }
 }
 
@@ -128,31 +132,207 @@ async fn main() -> Result<(), anyhow::Error> {
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
     
     let persistence_flag = common::persistence_agent::pers_measurament_to_flag(&opt.measurament);
-    let persistence = common::persistence_agent::PersistenceAgent::new(Some("pingpong.dat"), persistence_flag, &(opt.interval as u32));
+    let mut persistence = common::persistence_agent::PersistenceAgent::new(Some("pingpong.dat"), persistence_flag, &(opt.interval as u32));
     let index = unsafe{libc::if_nametoindex(opt.iface.as_ptr())};
-    let cfg = Config::new(opt.iface, index, opt.packets, opt.interval);
+    let cfg = Config::new(opt.iface.clone(), index, opt.packets, opt.interval);
     let (src_mac, src_ip, dest_mac, dest_ip) = common::common_net::exchange_eth_ip_addresses(index, Some(&opt.server))?;
 
     let map =  get_map(&mut bpf, "xsk_map".to_string())?;
     let xsk_map: maps::XskMap<&mut maps::MapData> = maps::XskMap::try_from(map)?;
-    // let a = xsk_map.set(0, )c
-    // let a = xsk_map.borrow().fd();
-    // let fd = xsk_map.fd();
-    // let fd = xsk_map.inne
-    // let xsk_map_fd = libxdp_sys::bpf_object__find_map_fd_by_name (&mut bpf, "xsk_map");
 
 
     let packet_buffer_size = NUM_FRAMES*XSK_UMEM__DEFAULT_FRAME_SIZE;
     let packet_buffer = get_packet_buffer(packet_buffer_size)?;
 
     let mut umem_info = configure_xsk_umem(packet_buffer, packet_buffer_size)?;
-    // let socket = xsk_configure_socket(cfg, &mut umem_info, &opt.iface, xsk_map)?;
+    let mut socket = xsk_configure_socket(&cfg, &mut umem_info, &opt.iface, xsk_map)?;
+    let start = common::utils::get_time_ns();
+    println!("Starting experiment");
+    initialize_client(&cfg, &socket, src_mac, dest_mac, src_ip, dest_ip);
+
+    rx_and_process(cfg.xsk_poll_mode, &mut socket, opt.packets, &mut persistence);
+    let end = common::utils::get_time_ns();
+    let time_taken = end-start/ 1000000;
+    println!("Experiment finished in {time_taken} milliseconds.");
+
+    persistence.close();
 
     info!("Waiting for Ctrl-C...");
     signal::ctrl_c().await?;
     info!("Exiting...");
 
     Ok(())
+}
+
+pub fn rx_and_process(poll_mode: bool, xsk_socket: &mut XskSocketInfo, iters: u64, pa: &mut common::persistence_agent::PersistenceAgent) -> Result<(), std::io::Error>{
+    let mut fds = [libc::pollfd{fd: 0, events: 0, revents: 0}; 2];
+    let ret = 1;
+    let nfds = 1;
+    fds[0].fd = xsk_socket.xsk.fd_raw();
+    fds[0].events = libc::POLLIN;
+    loop{
+        if poll_mode {
+            let ret = unsafe{libc::poll(&mut fds as *mut libc::pollfd, nfds, -1)};
+            if ret <= 0 || ret >1{
+                continue;
+            }
+        }
+        let interrupt = handle_receive_packets(xsk_socket, iters, pa)?;
+        if interrupt{
+            break;
+        }
+    }
+    Ok(())
+}
+
+
+pub fn handle_receive_packets(xsk: &mut XskSocketInfo, iters: u64, pa: &mut common::persistence_agent::PersistenceAgent) -> Result<bool, std::io::Error>{
+    xsk.xsk_client_lock.lock();
+    let rcvd = 0;
+    let stock_frames = 0;
+    let i = 0;
+    let idx_rx = 0;
+    let idx_fq = 0;
+
+    let mut rec = 0;
+    
+    let stock_frames = xsk.fq.nb_free (xsk.umem_frame_free as u32);
+    if stock_frames > 0{
+        let mut frames = vec![xsk_rs::FrameDesc::default();stock_frames as usize];
+        for i in 0..stock_frames as usize{
+            let addr = xsk_alloc_umem_frame(xsk)?;
+            frames[i].set_addr(addr as usize);
+        
+        }
+        let recvd = unsafe {xsk.fq.produce(&frames)};
+        if recvd == 0{
+            return Ok(false);
+        }
+        rec = recvd;
+    }
+    let mut inter= false;
+    for i in 0..rec{
+        unsafe{
+            let ring = xsk.rx.get_raw_rx_desc(i as u32);
+            let (res, interrupt) = process_packet(xsk, (*ring).addr, (*ring).len, iters, pa);
+            inter = interrupt;
+            if !res{
+                xsk_free_umem_frame(xsk, (*ring).addr);
+            }
+        }
+    }
+
+    complete_tx(xsk);
+    Ok(inter)
+}
+
+
+
+pub fn xsk_free_umem_frame(xsk: &mut XskSocketInfo, frame: u64){
+    assert!(xsk.umem_frame_free < NUM_FRAMES);
+
+    xsk.umem_frame_addr[xsk.umem_frame_free] = frame;
+    xsk.umem_frame_free += 1;
+}
+
+pub fn process_packet(xsk: &mut XskSocketInfo, addr: u64, len: u32, iters: u64, pa: &mut common::persistence_agent::PersistenceAgent) -> (bool, bool){
+    let receive_timestamp = common::utils::get_time_ns();
+    let pkt=  unsafe{libxdp_sys::xsk_umem__get_data( xsk.umem.buffer.as_mut_ptr() as *mut libc::c_void, addr)};
+    let eth_len = network_types::eth::EthHdr::LEN as u32;
+    let ip_len = network_types::ip::Ipv4Hdr::LEN as u32;
+    let pp_len =  PingPongPayload::LEN as u32;
+    
+    if len < eth_len + ip_len + pp_len{
+        eprintln!("Received packet is too small");
+        return (false, false);
+    }
+    let mut interrupt = false;
+    let eth = pkt as *const network_types::eth::EthHdr;
+    let payload = unsafe{pkt.offset(eth_len as isize+ ip_len as isize)} as *mut PingPongPayload;
+    if unsafe{(*eth).ether_type} as u16 != common::consts::ETH_P_PINGPONG{
+        eprintln!("Received a non pingpong packet");
+        return (false, false);
+    }
+
+    if unsafe{*payload}.id >= iters{
+        interrupt = true;
+    }
+    unsafe{
+        (*payload).ts[3] = receive_timestamp;
+         pa.write(*payload);
+    }
+    return (false, interrupt);
+}
+
+
+pub fn initialize_client(cfg: &Config, socket: &XskSocketInfo, src_mac: [u8;6], dest_mac: [u8;6], src_ip: u32, dest_ip: u32 ){
+    let ifindex = cfg.ifindex;
+    let base_packet = common::common_net::build_base_packet(src_mac,  src_ip, dest_mac,  dest_ip);
+    let sock_addr = common::common_net::build_sockaddr(ifindex as i32, dest_mac);
+    // start sending packets
+    
+}
+
+pub fn client_send_pp_packet(packet_id: u64, mut ip: network_types::ip::Ipv4Hdr, eth: network_types::eth::EthHdr, socket: XskSocketInfo){
+    ip.id = packet_id as u16;
+    let mut payload = PingPongPayload::new(packet_id);
+    payload.ts[0] = common::utils::get_time_ns();
+    let mut packet = [0u8;common::consts::PACKET_SIZE];
+    unsafe{
+        let eth_ptr = &eth as *const network_types::eth::EthHdr;
+        let ip_ptr = &ip as *const network_types::ip::Ipv4Hdr;
+        let payload_ptr = &payload as * const PingPongPayload;
+        let eth_len =  network_types::eth::EthHdr::LEN;
+        let ip_len =  network_types::ip::Ipv4Hdr::LEN;
+        std::ptr::copy_nonoverlapping(eth_ptr as *const u8, packet.as_mut_ptr().add(0), eth_len);
+        std::ptr::copy_nonoverlapping(ip_ptr as *const u8, packet.as_mut_ptr().add(eth_len), ip_len);
+        std::ptr::copy_nonoverlapping(payload_ptr as *const u8, packet.as_mut_ptr().add(eth_len+ip_len), PingPongPayload::LEN);
+    }
+    // xsk_send_packet()
+    
+}
+
+pub fn xsk_send_packet(mut socket: XskSocketInfo, addr: u64, len: usize, is_umem_frame: bool, complete: bool)-> Result<(), std::io::Error>{
+    socket.xsk_client_lock.lock();
+    let tx_idx = 0;
+    let mut frame_desc = xsk_rs::FrameDesc::default();
+    if is_umem_frame{
+        frame_desc.set_addr(addr as usize);
+    } else {
+        let frame_addr = &xsk_alloc_umem_frame(&mut socket)?;
+        frame_desc.set_addr(*frame_addr as usize);
+    }
+    frame_desc.set_length_data(len);
+    let count = unsafe{socket.tx.produce_one(&frame_desc)};
+    
+    unsafe {
+        let dst = libxdp_sys::xsk_umem__get_data( socket.umem.buffer.as_mut_ptr() as *mut libc::c_void, frame_desc.addr() as u64);
+        let src = addr as *const u8;
+        std::ptr::copy_nonoverlapping(src, dst as *mut u8, len);
+    }
+    
+    if count != 1{
+        return common::utils::new_error("No more transmit slots");
+    }
+    socket.outstanding_tx +=1;
+    if complete{
+        complete_tx(&mut socket);
+    }
+    Ok(())
+}
+
+pub fn complete_tx(xsk: &mut XskSocketInfo) -> Result<(), std::io::Error>{
+    if xsk.outstanding_tx != 0{
+        return Ok(());
+    }
+    xsk.tx.wakeup()?;
+    let mut frame_descs = vec![xsk_rs::FrameDesc::default(); xsk.outstanding_tx as usize];
+    let cnt = unsafe {xsk.rx.consume(&mut frame_descs)};
+    if cnt > 0{
+        xsk.outstanding_tx -= if cnt< xsk.outstanding_tx as usize {cnt as u32} else {xsk.outstanding_tx};
+    }
+    Ok(())
+    
 }
 
 
@@ -198,7 +378,7 @@ pub fn configure_xsk_umem(buffer: *mut u8, size: usize) -> Result<XskUmemInfo, s
 }
 
 
-pub fn xsk_configure_socket(cfg: Config, umem: &mut XskUmemInfo, 
+pub fn xsk_configure_socket(cfg: &Config, umem: &mut XskUmemInfo, 
     ifname: &str, mut xsk_map: maps::XskMap<&mut maps::MapData>) -> Result<XskSocketInfo, std::io::Error> {
     let mut builder = xsk_rs::config::SocketConfig::builder();
     builder.xdp_flags(cfg.xdp_flags);
@@ -234,12 +414,12 @@ pub fn xsk_configure_socket(cfg: Config, umem: &mut XskUmemInfo,
         return common::utils::new_error("Prod reserve failed");
     }
     let lock = std::sync::Mutex::new(());
-    let mut xsk_info = XskSocketInfo::new(lock, socket, umem.to_owned());
+    let mut xsk_info = XskSocketInfo::new(lock, socket, tx, rx, fq, umem.to_owned());
     for i in 0..libxdp_sys::XSK_RING_PROD__DEFAULT_NUM_DESCS{
         let val = xsk_alloc_umem_frame(&mut xsk_info)?;
-        fq.fill_addr(i, val)
+        xsk_info.fq.fill_addr(i, val)
     }
-    fq.prod_submit(libxdp_sys::XSK_RING_PROD__DEFAULT_NUM_DESCS);
+    xsk_info.fq.prod_submit(libxdp_sys::XSK_RING_PROD__DEFAULT_NUM_DESCS);
     Ok(xsk_info)
     
 }
