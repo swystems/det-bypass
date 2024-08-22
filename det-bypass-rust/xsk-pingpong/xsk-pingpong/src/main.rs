@@ -33,6 +33,7 @@ struct Opt {
 }
 
 #[repr(C)]
+#[derive(Clone)]
 struct Config {
     xdp_flags: xsk_rs::config::XdpFlags,
     ifindex: u32,
@@ -148,9 +149,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let mut socket = xsk_configure_socket(&cfg, &mut umem_info, &opt.iface, xsk_map)?;
     let start = common::utils::get_time_ns();
     println!("Starting experiment");
-    initialize_client(&cfg, &socket, src_mac, dest_mac, src_ip, dest_ip);
+    let s = std::sync::Arc::new(std::sync::Mutex::new(socket));
+    initialize_client(cfg.clone(), std::sync::Arc::clone(&s), src_mac, dest_mac, src_ip, dest_ip);
 
-    rx_and_process(cfg.xsk_poll_mode, &mut socket, opt.packets, &mut persistence);
+    rx_and_process(cfg.xsk_poll_mode, s, opt.packets, &mut persistence);
     let end = common::utils::get_time_ns();
     let time_taken = end-start/ 1000000;
     println!("Experiment finished in {time_taken} milliseconds.");
@@ -164,11 +166,12 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-pub fn rx_and_process(poll_mode: bool, xsk_socket: &mut XskSocketInfo, iters: u64, pa: &mut common::persistence_agent::PersistenceAgent) -> Result<(), std::io::Error>{
+pub fn rx_and_process(poll_mode: bool, xsk_socket:std::sync::Arc<std::sync::Mutex<XskSocketInfo>>, iters: u64, pa: &mut common::persistence_agent::PersistenceAgent) -> Result<(), std::io::Error>{
+    let mut socket = xsk_socket.lock().unwrap();
     let mut fds = [libc::pollfd{fd: 0, events: 0, revents: 0}; 2];
     let ret = 1;
     let nfds = 1;
-    fds[0].fd = xsk_socket.xsk.fd_raw();
+    fds[0].fd = socket.xsk.fd_raw();
     fds[0].events = libc::POLLIN;
     loop{
         if poll_mode {
@@ -177,7 +180,7 @@ pub fn rx_and_process(poll_mode: bool, xsk_socket: &mut XskSocketInfo, iters: u6
                 continue;
             }
         }
-        let interrupt = handle_receive_packets(xsk_socket, iters, pa)?;
+        let interrupt = handle_receive_packets(&mut socket, iters, pa)?;
         if interrupt{
             break;
         }
@@ -265,15 +268,34 @@ pub fn process_packet(xsk: &mut XskSocketInfo, addr: u64, len: u32, iters: u64, 
 }
 
 
-pub fn initialize_client(cfg: &Config, socket: &XskSocketInfo, src_mac: [u8;6], dest_mac: [u8;6], src_ip: u32, dest_ip: u32 ){
+pub fn initialize_client(cfg: Config, socket: std::sync::Arc<std::sync::Mutex<XskSocketInfo>>, src_mac: [u8;6], dest_mac: [u8;6], src_ip: u32, dest_ip: u32 ){
     let ifindex = cfg.ifindex;
     let base_packet = common::common_net::build_base_packet(src_mac,  src_ip, dest_mac,  dest_ip);
-    let sock_addr = common::common_net::build_sockaddr(ifindex as i32, dest_mac);
-    // start sending packets
-    
+    let (eth, ip) = common::common_net::get_eth_ip(src_mac, src_ip, dest_mac, dest_ip);
+    start_sending_packets(cfg, eth, ip, socket);
 }
 
-pub fn client_send_pp_packet(packet_id: u64, mut ip: network_types::ip::Ipv4Hdr, eth: network_types::eth::EthHdr, socket: XskSocketInfo){
+
+pub fn start_sending_packets(cfg: Config, eth: network_types::eth::EthHdr, ip: network_types::ip::Ipv4Hdr, socket: std::sync::Arc<std::sync::Mutex<XskSocketInfo>>,){
+    // let s = std::sync::Arc::new(std::sync::Mutex::new(socket));
+    std::thread::spawn(move || send_packets(cfg, eth, ip, socket));
+}
+
+pub fn send_packets(cfg: Config, eth: network_types::eth::EthHdr, ip: network_types::ip::Ipv4Hdr, socket: std::sync::Arc<std::sync::Mutex<XskSocketInfo>>) -> Result<(), std::io::Error>{
+    let mut socket = socket.lock().unwrap();
+    for i in 1..cfg.iters{
+        let start = common::utils::get_time_ns();
+        client_send_pp_packet(i, ip, eth, &mut socket)?;
+        let interval = common::utils::get_time_ns() - start;
+        if interval< cfg.interval{
+            common::utils::pp_sleep(cfg.interval-interval);
+        }
+    }
+    Ok(())
+}
+
+
+pub fn client_send_pp_packet(packet_id: u64, mut ip: network_types::ip::Ipv4Hdr, eth: network_types::eth::EthHdr, socket: &mut XskSocketInfo) -> Result<(), std::io::Error>{
     ip.id = packet_id as u16;
     let mut payload = PingPongPayload::new(packet_id);
     payload.ts[0] = common::utils::get_time_ns();
@@ -288,18 +310,19 @@ pub fn client_send_pp_packet(packet_id: u64, mut ip: network_types::ip::Ipv4Hdr,
         std::ptr::copy_nonoverlapping(ip_ptr as *const u8, packet.as_mut_ptr().add(eth_len), ip_len);
         std::ptr::copy_nonoverlapping(payload_ptr as *const u8, packet.as_mut_ptr().add(eth_len+ip_len), PingPongPayload::LEN);
     }
-    // xsk_send_packet()
-    
+    return xsk_send_packet(socket, packet, false, false);
 }
 
-pub fn xsk_send_packet(mut socket: XskSocketInfo, addr: u64, len: usize, is_umem_frame: bool, complete: bool)-> Result<(), std::io::Error>{
+pub fn xsk_send_packet(socket: &mut XskSocketInfo, packet: [u8;common::consts::PACKET_SIZE], is_umem_frame: bool, complete: bool)-> Result<(), std::io::Error>{
+    let addr = packet.as_ptr();
+    let len = packet.len();
     socket.xsk_client_lock.lock();
     let tx_idx = 0;
     let mut frame_desc = xsk_rs::FrameDesc::default();
     if is_umem_frame{
         frame_desc.set_addr(addr as usize);
     } else {
-        let frame_addr = &xsk_alloc_umem_frame(&mut socket)?;
+        let frame_addr = &xsk_alloc_umem_frame(socket)?;
         frame_desc.set_addr(*frame_addr as usize);
     }
     frame_desc.set_length_data(len);
@@ -316,7 +339,7 @@ pub fn xsk_send_packet(mut socket: XskSocketInfo, addr: u64, len: usize, is_umem
     }
     socket.outstanding_tx +=1;
     if complete{
-        complete_tx(&mut socket);
+        complete_tx(socket);
     }
     Ok(())
 }
