@@ -34,7 +34,7 @@ struct Opt {
 
 #[repr(C)]
 #[derive(Clone)]
-struct Config {
+pub struct Config {
     xdp_flags: xsk_rs::config::XdpFlags,
     ifindex: u32,
     ifname: String,
@@ -56,7 +56,7 @@ impl Config {
 
 #[repr(C)]
 #[derive(Clone)]
-struct XskUmemInfo {
+pub struct XskUmemInfo {
     umem: xsk_rs::Umem,
     buffer: [u8;common::consts::PACKET_SIZE]
     // struct xsk_ring_prod fq;
@@ -72,24 +72,23 @@ impl XskUmemInfo{
 }
 
 #[repr(C)]
-struct XskSocketInfo {
-    pub xsk: xsk_rs::Socket,
-    pub tx: xsk_rs::TxQueue,
-    pub rx: xsk_rs::RxQueue,
-    pub fq: xsk_rs::FillQueue,
-    pub umem_frame_addr: [u64; NUM_FRAMES],
-    pub umem_frame_free: usize,
-    pub outstanding_tx: u32,
-    pub umem: XskUmemInfo,
-    pub xsk_client_lock: std::sync::Mutex<()>
+pub struct XskSocketInfo {
+    pub xsk:xsk_rs::Socket,
+    pub tx:xsk_rs::TxQueue,
+    pub rx:xsk_rs::RxQueue,
+    pub fq:xsk_rs::FillQueue,
+    pub umem_frame_addr:[u64; NUM_FRAMES],
+    pub umem_frame_free:usize,
+    pub outstanding_tx:u32,
+    pub umem:XskUmemInfo,
+    // pub xsk_client_lock:std::sync::Mutex<()>
 }
 
 impl XskSocketInfo{
-    pub fn new(lock: std::sync::Mutex<()>, xsk: xsk_rs::Socket,tx: xsk_rs::TxQueue, rx: xsk_rs::RxQueue, fq: xsk_rs::FillQueue, umem: XskUmemInfo) -> Self{
+    pub fn new(xsk: xsk_rs::Socket,tx: xsk_rs::TxQueue, rx: xsk_rs::RxQueue, fq: xsk_rs::FillQueue, umem: XskUmemInfo) -> Self{
         XskSocketInfo{xsk, umem_frame_addr: [0u64; NUM_FRAMES],
              umem_frame_free: 0, outstanding_tx: 0, umem,
              tx, rx, fq,
-             xsk_client_lock: lock
          }
     }
 }
@@ -141,18 +140,14 @@ async fn main() -> Result<(), anyhow::Error> {
     let map =  get_map(&mut bpf, "xsk_map".to_string())?;
     let xsk_map: maps::XskMap<&mut maps::MapData> = maps::XskMap::try_from(map)?;
 
-
-    let packet_buffer_size = NUM_FRAMES*XSK_UMEM__DEFAULT_FRAME_SIZE;
-    let packet_buffer = get_packet_buffer(packet_buffer_size)?;
-
-    let mut umem_info = configure_xsk_umem(packet_buffer, packet_buffer_size)?;
-    let mut socket = xsk_configure_socket(&cfg, &mut umem_info, &opt.iface, xsk_map)?;
+    let mut umem_info = configure_xsk_umem()?;
+    let socket = xsk_configure_socket(&cfg, &mut umem_info, &opt.iface, xsk_map)?;
     let start = common::utils::get_time_ns();
     println!("Starting experiment");
     let s = std::sync::Arc::new(std::sync::Mutex::new(socket));
     initialize_client(cfg.clone(), std::sync::Arc::clone(&s), src_mac, dest_mac, src_ip, dest_ip);
 
-    rx_and_process(cfg.xsk_poll_mode, s, opt.packets, &mut persistence);
+    rx_and_process(cfg.xsk_poll_mode, s, opt.packets, &mut persistence)?;
     let end = common::utils::get_time_ns();
     let time_taken = end-start/ 1000000;
     println!("Experiment finished in {time_taken} milliseconds.");
@@ -169,7 +164,6 @@ async fn main() -> Result<(), anyhow::Error> {
 pub fn rx_and_process(poll_mode: bool, xsk_socket:std::sync::Arc<std::sync::Mutex<XskSocketInfo>>, iters: u64, pa: &mut common::persistence_agent::PersistenceAgent) -> Result<(), std::io::Error>{
     let mut socket = xsk_socket.lock().unwrap();
     let mut fds = [libc::pollfd{fd: 0, events: 0, revents: 0}; 2];
-    let ret = 1;
     let nfds = 1;
     fds[0].fd = socket.xsk.fd_raw();
     fds[0].events = libc::POLLIN;
@@ -190,13 +184,6 @@ pub fn rx_and_process(poll_mode: bool, xsk_socket:std::sync::Arc<std::sync::Mute
 
 
 pub fn handle_receive_packets(xsk: &mut XskSocketInfo, iters: u64, pa: &mut common::persistence_agent::PersistenceAgent) -> Result<bool, std::io::Error>{
-    xsk.xsk_client_lock.lock();
-    let rcvd = 0;
-    let stock_frames = 0;
-    let i = 0;
-    let idx_rx = 0;
-    let idx_fq = 0;
-
     let mut rec = 0;
     
     let stock_frames = xsk.fq.nb_free (xsk.umem_frame_free as u32);
@@ -225,7 +212,7 @@ pub fn handle_receive_packets(xsk: &mut XskSocketInfo, iters: u64, pa: &mut comm
         }
     }
 
-    complete_tx(xsk);
+    complete_tx(xsk)?;
     Ok(inter)
 }
 
@@ -269,8 +256,6 @@ pub fn process_packet(xsk: &mut XskSocketInfo, addr: u64, len: u32, iters: u64, 
 
 
 pub fn initialize_client(cfg: Config, socket: std::sync::Arc<std::sync::Mutex<XskSocketInfo>>, src_mac: [u8;6], dest_mac: [u8;6], src_ip: u32, dest_ip: u32 ){
-    let ifindex = cfg.ifindex;
-    let base_packet = common::common_net::build_base_packet(src_mac,  src_ip, dest_mac,  dest_ip);
     let (eth, ip) = common::common_net::get_eth_ip(src_mac, src_ip, dest_mac, dest_ip);
     start_sending_packets(cfg, eth, ip, socket);
 }
@@ -316,8 +301,6 @@ pub fn client_send_pp_packet(packet_id: u64, mut ip: network_types::ip::Ipv4Hdr,
 pub fn xsk_send_packet(socket: &mut XskSocketInfo, packet: [u8;common::consts::PACKET_SIZE], is_umem_frame: bool, complete: bool)-> Result<(), std::io::Error>{
     let addr = packet.as_ptr();
     let len = packet.len();
-    socket.xsk_client_lock.lock();
-    let tx_idx = 0;
     let mut frame_desc = xsk_rs::FrameDesc::default();
     if is_umem_frame{
         frame_desc.set_addr(addr as usize);
@@ -339,7 +322,7 @@ pub fn xsk_send_packet(socket: &mut XskSocketInfo, packet: [u8;common::consts::P
     }
     socket.outstanding_tx +=1;
     if complete{
-        complete_tx(socket);
+        complete_tx(socket)?;
     }
     Ok(())
 }
@@ -360,7 +343,7 @@ pub fn complete_tx(xsk: &mut XskSocketInfo) -> Result<(), std::io::Error>{
 
 
 pub fn get_map(bpf: &mut Bpf, map_name: String) -> Result<&mut aya::maps::Map, std::io::Error>{
-    let map = match bpf.map_mut("xsk_map"){
+    let map = match bpf.map_mut(&map_name){
         Some(m) => m,
         None => return common::utils::new_error("a")
     };
@@ -381,7 +364,7 @@ pub fn get_packet_buffer(size: usize) -> Result<*mut u8, std::io::Error>{
 }
 
 
-pub fn configure_xsk_umem(buffer: *mut u8, size: usize) -> Result<XskUmemInfo, std::io::Error>{
+pub fn configure_xsk_umem() -> Result<XskUmemInfo, std::io::Error>{
     let fs = match xsk_rs::config::FrameSize::new(XSK_UMEM__DEFAULT_FRAME_SIZE as u32){
         Ok(fs) => fs,
         Err(e) => return common::utils::new_error(format!("Error is: {e}").as_str())
@@ -410,13 +393,13 @@ pub fn xsk_configure_socket(cfg: &Config, umem: &mut XskUmemInfo,
     let config = builder.build();
     let cname = std::ffi::CString::new(ifname).unwrap();
     let interface = xsk_rs::config::Interface::new(cname);
-    let (tx, rx, fq_cq,mut socket) = match unsafe{xsk_rs::Socket::new(config, &umem.umem, &interface, 0)}{
+    let (tx, rx, fq_cq, socket) = match unsafe{xsk_rs::Socket::new(config, &umem.umem, &interface, 0)}{
         Ok(s) => s,
         Err(e) => return common::utils::new_error(format!("Error: {e}").as_str())
     };
 
 
-    xsk_map.set(0, socket.fd_raw(), 0);
+    let _ = xsk_map.set(0, socket.fd_raw(), 0);
     
     // socket.update_xskmap(xsk_map_fd)?;
     let mut umem_frame_addr = [0u64; NUM_FRAMES]; 
@@ -424,11 +407,8 @@ pub fn xsk_configure_socket(cfg: &Config, umem: &mut XskUmemInfo,
     for i in   0..NUM_FRAMES{
         umem_frame_addr[i] = i as u64 * FRAME_SIZE;
     } 
-
-    
-    let umem_frame_free = NUM_FRAMES;
-
-    let (mut fq, cq) =  match fq_cq {
+  
+    let (mut fq, _cq) =  match fq_cq {
         None => return common::utils::new_error("No fill queue available"),
         Some((fq, cq)) => (fq, cq)
     };
@@ -436,8 +416,7 @@ pub fn xsk_configure_socket(cfg: &Config, umem: &mut XskUmemInfo,
     if ret != libxdp_sys::XSK_RING_PROD__DEFAULT_NUM_DESCS{
         return common::utils::new_error("Prod reserve failed");
     }
-    let lock = std::sync::Mutex::new(());
-    let mut xsk_info = XskSocketInfo::new(lock, socket, tx, rx, fq, umem.to_owned());
+    let mut xsk_info = XskSocketInfo::new(socket, tx, rx, fq, umem.to_owned());
     for i in 0..libxdp_sys::XSK_RING_PROD__DEFAULT_NUM_DESCS{
         let val = xsk_alloc_umem_frame(&mut xsk_info)?;
         xsk_info.fq.fill_addr(i, val)
@@ -449,12 +428,11 @@ pub fn xsk_configure_socket(cfg: &Config, umem: &mut XskUmemInfo,
 
 
 pub fn xsk_alloc_umem_frame(xsk: &mut XskSocketInfo)-> Result<u64, std::io::Error> {
-    let mut frame = 0;
     if xsk.umem_frame_free == 0{
         return common::utils::new_error("No free frames");
     }
     xsk.umem_frame_free -= 1;
-    frame = xsk.umem_frame_addr[xsk.umem_frame_free];
+    let frame = xsk.umem_frame_addr[xsk.umem_frame_free];
     xsk.umem_frame_addr[xsk.umem_frame_free] = INVALID_UMEM_FRAME;
     return Ok(frame);
 }
