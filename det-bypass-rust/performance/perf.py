@@ -13,9 +13,8 @@ def main():
     arguments = parser.parse_args()
     program = arguments.program
     intervals = [10, 15, 100, 150, 1000, 1500, 10000, 
-                 15000,30000,50000, 70000, 80000, 90000, 100000]
-                 #150000, 1000000, 1500000, 10000000, 15000000]
-    intervals = [10, 15]
+                 15000,30000,50000, 70000, 80000, 90000, 100000,
+                 150000, 1000000, 1500000, 10000000, 15000000]
     interval_to_err_to_threshold = {}
     for interval in intervals:
         thresholds = compute_thresholds(interval)
@@ -27,7 +26,7 @@ def main():
                 "cpu_cycles": []}
         for th in thresholds:
             # perf stat -- target/release/performance -t 10 -s 1000_000
-            result = subprocess.run(["perf", "stat", "--", "../target/release/performance", "-t", f"{th}" , "-s", f"{interval}"], capture_output=True, text=True)
+            result = subprocess.run(["perf", "stat", "--", program, "-t", f"{th}" , "-s", f"{interval}"], capture_output=True, text=True)
             th_data = parse_result(result)
             avg = unit_to_interval(th_data["avg"])
             err = (avg-interval)*100/interval
@@ -56,17 +55,13 @@ def main():
 
 
 def output_cpp_map(interval_to_err):
-  #    {
-  #   {10, {{1020, 10.0}, {555410.0, 5.0}, {556980.0, 1.0},{562360.0, 3.0},{571610.0, 7.0}}},
-  #   {15, {{1020, 10.0}, {555410.0, 5.0}, {556980.0, 1.0},{562360.0, 3.0},{571610.0, 7.0}}}
-  # };
     output = open("interval_to_threshold.txt", "w")
     output.write("{\n")
     for interval, err in interval_to_err.items():
         output.write(f"{{ {interval}, {{")
         for error, th in err.items():
             output.write(f"{{ {error}, {th} }},")
-        output.write(f"}}}},\n")
+        output.write("}}}},\n")
     output.write("};\n")
     output.close()
     
@@ -119,7 +114,6 @@ def get_suggested_threshold(interval, err):
     closest_interval = bisect.bisect_left(intervals, interval)
     if closest_interval == len(intervals):
         closest_interval -= 1
-    print(closest_interval)
     inter = intervals[closest_interval]
     if inter > interval and closest_interval != 0:
         inter = intervals[closest_interval-1]
@@ -127,7 +121,6 @@ def get_suggested_threshold(interval, err):
     closest_err = bisect.bisect_left(errors, err)
     if closest_err == len(errors):
         closest_err -= 1
-    print(closest_err)
     error = errors[closest_err]
     if error > err and closest_err != 0:
         error = errors[closest_err-1]
