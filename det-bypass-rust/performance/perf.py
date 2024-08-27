@@ -61,7 +61,7 @@ def output_cpp_map(interval_to_err):
         output.write(f"{{ {interval}, {{")
         for error, th in err.items():
             output.write(f"{{ {error}, {th} }},")
-        output.write("}}}},\n")
+        output.write("}},\n")
     output.write("};\n")
     output.close()
     
