@@ -1,0 +1,23 @@
+[package]
+name = "pingpong-xdp"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+aya = "0.12"
+aya-log = "0.2"
+clap = { version = "4.1", features = ["derive"] }
+pingpong-xdp-common = { path = "../pingpong-xdp-common", features = ["user"] }
+anyhow = "1"
+env_logger = "0.10"
+libc = "0.2"
+log = "0.4"
+tokio = { version = "1.25", features = ["macros", "rt", "rt-multi-thread", "net", "signal"] }
+common = {path = "../../common/"}
+pingpong = {path = "../../pingpong/"}
+network-types = "*"
+
+[[bin]]
+name = "pingpong-xdp"
+path = "src/main.rs"

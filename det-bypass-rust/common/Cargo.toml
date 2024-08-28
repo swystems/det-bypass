@@ -5,3 +5,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
+aya-ebpf = "0.1.0"
+aya = "0.12"
+network-types = "*"
+pingpong = {path = "../pingpong"}

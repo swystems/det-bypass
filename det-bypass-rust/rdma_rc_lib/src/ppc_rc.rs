@@ -1,7 +1,8 @@
 
-use common::{consts, persistence_agent::{self, PingPongPayload}, utils};
+use common::{consts, persistence_agent, utils};
 use rdma::{ah, bindings, device, mr, poll_cq_attr, qp, qp_ex, wr};
 
+use pingpong::PingPongPayload;
 use crate::{ib_net, pingpong_context::{self, PingPongContext}};
 use crate::post_context;
 use crate::post_context::PostContext;

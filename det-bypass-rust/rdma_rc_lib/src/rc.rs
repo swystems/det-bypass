@@ -112,7 +112,7 @@ fn poll(iters: u64, ctx: &mut ppc_rc::RCContext, persistence: &mut Option<&mut p
 }
 
 pub fn pp_send_single_packet<T: post_context::PostContext>(packet_id: u64, context:  &mut T)-> Result<(), std::io::Error>{
-    let mut payload = persistence_agent::PingPongPayload::new(packet_id);
+    let mut payload = pingpong::PingPongPayload::new(packet_id);
     payload.set_ts_value(1, utils::get_time_ns());
     context.set_send_payload(payload);
     context.post_send(post_context::PostOptions { queue_idx: None, lkey:0 , buf: std::ptr::null_mut()})

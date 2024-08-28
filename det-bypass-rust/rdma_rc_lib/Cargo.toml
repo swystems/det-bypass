@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 rand = "0.8.5"
 common = {path = "../common/"} 
+pingpong = {path = "../pingpong/"}
 #ibverbs = "0.7.1"
 rdma = {path ="../../../rdma/crates/rdma/"}
 libc = "*"

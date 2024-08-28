@@ -16,7 +16,7 @@ macro_rules! barrier {
 macro_rules! busy_wait {
     ($cond:expr) => {
         while $cond {
-            common::barrier!();
+            $crate::barrier!();
         }
     };
 }
