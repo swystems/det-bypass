@@ -7,6 +7,5 @@ edition = "2021"
 rand = "0.8.5"
 common = {path = "../common/"} 
 pingpong = {path = "../pingpong/"}
-#ibverbs = "0.7.1"
-rdma = {path ="../../../rdma/crates/rdma/"}
+rdma = {git="https://github.com/JacobSalvi/rdma.git"}
 libc = "*"
