@@ -7,7 +7,6 @@ const IB_MTU: u32 = bindings::IBV_MTU_1024;
 
 pub fn run_server(ib_devname: &str, port_gid_idx: i32, iters: u64) -> Result<(), std::io::Error>{
     let  mut ctx  = initialize(ib_devname, port_gid_idx, None)?;
-  println!("after initialize");
     poll(iters, &mut ctx, &mut None)?;
     Ok(())
 }
