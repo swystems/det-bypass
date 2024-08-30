@@ -1,0 +1,562 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage[colorlinks = true]{hyperref}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{minted}
+\usepackage{booktabs}
+\newcommand{\mycomment}[1]{}
+
+
+
+\title{UROP: RUST for kernel level distributed systems}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Porting to Rust}
+Rust is a modern, fast and safe system language. As of the writing of this report experimental support for it has been merged into the Linux Kernel.\\
+The objective of this UROP is to gauge the feasibility of replacing C code with RUST in the context of Kernel level distributed systems. \\
+In practice this has been achieved by porting \href{https://github.com/swystems/det-bypass}{det-bypass} to RUST. This repository contains experiments using both low level RDMA libraries and EBPF programs.\\
+The general approach for porting the code has been to try and keep the general structure of the original C code but to adapt it to the most idiomatic RUST paradigms whenever necessary. All of the RUST code can be found under the 'det-bypass-rust' directory.
+
+\subsection*{Translating RDMA}
+RDMA (remote direct memory access) allows for a computer to access the memory of another computer directly over the network without having to invoke the operating system, given the presence of specialized hardware.\\
+Given that there is no native rust RDMA library I had to look for a crate which would offer a wrapper around C bindings for the C RDMA library. There were a few crates available and after some testing I decided to use the following, \href{https://github.com/Nugine/rdma}{rdma}. It is to be noted that this crate is still in alpha, being on version 0.03.\\
+Due to the fact that some bindings for some structs and functions were not yet implemented I had to fork it and modify it to my needs. Here a link to my fork can be found \href{https://github.com/JacobSalvi/rdma}{jacob-rdma}.\\
+When porting the code to RUST I have generally turned function acting on a struct into associated functions:
+\begin{minted}{C}
+int pp_post_send (struct pingpong_context *ctx, const uint8_t *buffer)
+\end{minted}
+\begin{minted}{rust}
+fn post_send(&mut self, options: post_context::PostOptions) -> Result<(), std::io::Error>
+\end{minted}
+Another difference is in the error handling. Leveraging the RUST Result type and the '?' operator I was able to write pretty concise and clean code which handle errors.
+\begin{minted}{rust}
+pub fn run_server(ib_devname: &str, port_gid_idx: i32, iters: u64)
+-> Result<(), std::io::Error>{
+    let  mut ctx  = initialize(ib_devname, port_gid_idx, None)?;
+    println!("after initialize");
+    poll(iters, &mut ctx, &mut None)?;
+    Ok(())
+}
+\end{minted}
+
+Another important difference was that I have avoided casting to and from raw void pointers in RUST, favouring serializing and deserializing from buffer if necessary. Also, generally Rust function take exact types instead of *void pointer (even when the corresponding C function would take such a pointer) resulting in less situations in which such casts where necessary.
+
+\begin{minted}{C}
+int pp_send_single_packet (char *buf __unused, const uint64_t packet_id,
+struct sockaddr_ll *dest_addr __unused, void *aux)
+{
+    struct pingpong_context *ctx = (struct pingpong_context *) aux;
+    *ctx->send_payload = new_pingpong_payload (packet_id);
+    ctx->send_payload->ts[1] = get_time_ns ();
+
+    return pp_post_send (ctx, NULL);
+}
+\end{minted}
+
+\begin{minted}{rust}
+pub fn pp_send_single_packet<T: post_context::PostContext>
+(packet_id: u64, context:  &mut T)
+-> Result<(), std::io::Error>{
+    let mut payload = pingpong::PingPongPayload::new(packet_id);
+    payload.set_ts_value(1, utils::get_time_ns());
+    context.set_send_payload(payload);
+    context.post_send(post_context::PostOptions { queue_idx: None, lkey:0 ,
+    buf: std::ptr::null_mut()})
+}
+\end{minted}
+
+
+\subsection*{IBV WC LOC PROT ERR}
+After porting all the code to RUST and ensuring it would compile properly I have proceeded testing it by running both the server and the client side.\\
+I managed to iron out a few bugs during this procedure but one of them remained.\\
+In the polling function 'poll' of 'rc.rs' an error get raised consistently. At line 88 the invocation of the function 'parse\_single\_wc' inevitably signals a 'IBV\_WC\_LOC\_PROT\_ERR', which is defined as follows:\\
+\begin{quote}
+   Local Protection Error: the locally posted Work Request’s buffers in the scatter/gather list does not reference a Memory Region that is valid for the requested operation.
+  \begin{flushright}
+    \tiny{\href{https://www.rdmamojo.com/2013/02/15/ibv_poll_cq/}{rdmamojo}}
+  \end{flushright}
+\end{quote}
+
+I have spent a considerable amount of time reading both the C and RUST code to try and find out any difference or possible defect that would cause this error. I have ensured that the memory location was properly initialized and aligned, and that it was reference correctly and all the RUST structs were using \mintinline{rust}{#[repr(C)]} to be compatible with C functions. After discussing the issue with Rovelli Davide it was decided to open a pull request on the \href{https://github.com/Nugine/rdma}{rdma} crate and move on with the project. Up to this day the PR has been unanswered.
+
+\subsection*{Porting the xsk code}
+Another part of the det-bypass code base tests EBPF programs.\\
+The ebpf allows to write programs that can run in the server without having to recompile the kernel. This is achieved by producing an EBPF program, which is a assembly like language. The kernel then can load and verify such a program before running it.\\
+In rust there are a few crates that offer bindings and wrapper around the C library which allow to create EBPF programs, after testing some of them I have settled on \href{https://aya-rs.dev/book/}{aya}.\\
+Aya is a pure rust based framework which produces the ebpf programs directly. It doesn't wrap around a C library but instead implements the whole thing in Rust. It can be used to write both the kernel side and the userland side of an EBPF program.\\
+That said it is still in alpha, latest version being 0.1.0.
+
+\subsection*{Setting up aya}
+Following the Aya documentation it is possible to prepare the environment necessary to use it.\\
+Although the documentation claims that it is possible to develop in MacOs and then cross compile to a linux binary, I have found that in practice, even with the simplest example, Aya wouldn't compile on a macbook.\\
+To solve this issue I have tried using a virtual machine, running ubuntu 24.04. After the set up Aya would still give a compilation error.\\
+I had then decide to try and set up the whole thing on a old laptop which was running Arch Linux. After realizing that the way Arch handles static libraries was making the set up of Aya difficult I have decided to wipe this machine and install a fresh copy of ubuntu. Still after the setup Aya would complain about a compilation error on the first example given in the documentation.\\
+Returning to the virtual machine I had on the macbook to check whether the exact same error happened on the virtual machine and hardware I have found that Aya didn't fail to compile the example anymore on the VM.\\
+To this day I have no clue what fixed it nor how.\\
+While I was spending time installing Aya in various system I have been also testing some other Ebpf crates. They were all broken, deprecated and just a binding to C which would offer no real advantage over it.
+
+\subsection*{Aya's strange behaviours}
+While working my way through the examples offered by the aya book, and discovering they do not work, and while translating the code from C to Rust I have discovered a number of oddities to be kept in mind when working with aya.\\
+
+\subsubsection*{info!()}
+The macro \mintinline{rust}{info!()} is meant to be used in the kernel side of the Aya development. It allows to log information similar to \mintinline{c}{bpf_printk}.\\
+For some reason, sometimes but not always, using this macro prevents the compilation of the program throwing the following error:
+
+\begin{minted}{bash}
+error: linking with `bpf-linker` failed: exit status: 2
+\end{minted}
+
+I couldn't figure out a precise cause since there isn't a clear pattern to deduce when it is appropriate to use it or not.
+
+\subsubsection*{Result}
+The type \mintinline{rust}{Result<T,E>} is used to handle errors, returning either the Result T or an error R.\\
+It also seems to prevent compilation, but this time I seem to have found a pattern.\\
+The result is allowed in the main \mintinline{rust}{#[xdp]} function, but not anywhere else.\\
+Trying to unbox a result, either  through a try operator or a match, causes the same 'bpf-linker' error as seen above.\\
+Both of the following example would result in a compilation error:
+
+\begin{minted}{rust}
+fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
+    let ethhdr = ptr_at::<*const EthHdr>(&ctx, 0);
+    let a = match ethhdr {
+        Ok(a) => a,
+        Err(()) => return Err(())
+    };
+    Ok(xdp_action::XDP_PASS)
+}
+\end{minted}
+
+\begin{minted}{rust}
+fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
+    let ethhdr: *const EthHdr = ptr_at(&ctx, 0)?;
+    Ok(xdp_action::XDP_PASS)
+}
+\end{minted}
+
+\subsubsection*{Different return values}
+It seems like that the function invoked by the \mintinline{rust}{#[xdp]} function must return the same value (not only same type but same value) in all of its branches.\\
+As an example, the following will result in a compilation error:
+\begin{minted}{rust}
+#[xdp]
+pub fn xdp_firewall(ctx: XdpContext) -> u32 {
+    match try_xdp_firewall(ctx) {
+        Ok(ret) => ret,
+        Err(_) => xdp_action::XDP_ABORTED,
+    }
+}
+
+fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
+    if ctx.data_end() > EthHdr::LEN {
+        return Ok(xdp_action::XDP_ABORTED);
+    }
+
+    Ok(xdp_action::XDP_PASS)
+}
+
+\end{minted}
+
+But this would work:
+
+\begin{minted}{rust}
+#[xdp]
+pub fn xdp_firewall(ctx: XdpContext) -> u32 {
+    match try_xdp_firewall(ctx) {
+        Ok(ret) => ret,
+        Err(_) => xdp_action::XDP_ABORTED,
+    }
+}
+
+fn try_xdp_firewall(ctx: XdpContext) -> Result<u32, ()> {
+    if ctx.data_end() > EthHdr::LEN {
+        return Ok(xdp_action::XDP_PASS);
+    }
+
+    Ok(xdp_action::XDP_PASS)
+}
+
+\end{minted}
+
+These are the strange behaviours I have encountered and tried to work around and I don't think it would be pretentious of me to assume that there might be more such oddities.
+
+
+\subsection*{XSK}
+The original C code relied on a xsk library, among others. As for the rdma case I have looked into a few libraries which offered wrappers around the bare C bindings and have found \href{https://github.com/DouglasGray/xsk-rs}{xsk-rs}. As for rdma I had to make my own fork of this crate to add some structs and functions \href{https://github.com/JacobSalvi/xsk-rs}{js-xsk-rs}.\\
+As an additional challenge \href{https://github.com/DouglasGray/xsk-rs}{xsk-rs} has a dependency with \href{https://github.com/chenhengqi/libxdp-sys}{libxdp-sys}, which wouldn't build when I was developing the code. A quick look at the \href{https://github.com/chenhengqi/libxdp-sys}{libxdp-sys} revealed that this is a common problem other people also can't build it.\\
+As a solution to this problem I have created my own binding to libxdp, libelf, libz and libbpf, \href{https://github.com/JacobSalvi/libxdp}{libxdp}. Then I have modified the dependencies of my fork of \href{https://github.com/JacobSalvi/xsk-rs}{js-xsk-rs} to use by libxdp instead of the original one, and finally I could use it.
+
+
+\section*{Analysis of sleeping techniques}
+A secondary objective of this research became the study of different sleeping techniques and the trade off they have.\\
+The following piece of code shows how thread sleeping was handled during the port of  \href{https://github.com/swystems/det-bypass}{det-bypass} to RUST.\\
+The basic idea is to invoke \mintinline{rust}{std::thread::sleep()} for as long as possible and then busy wait for the remaining time. \\
+The native function \mintinline{rust}{std::thread::sleep()} guarantees that the thread will sleep for at least the provided sleep duration, but it makes no guarantee on sleeping only for the provided sleep duration. This means that \mintinline{rust}{std::thread::sleep()} will always sleep a bit more than specified. This leads to low accuracy at lower sleep durations.\\
+To try and solve this issues a custom sleeping function was implemented. The variable \mintinline{rust}{threshold} ensures \mintinline{rust}{std::thread::sleep()} gets called only for larger sleep duration. In practice this means that we do not trust \mintinline{rust}{std::thread::sleep()} with sleep durations smaller than the threshold.\\
+
+\begin{minted}[linenos]{rust}
+pub fn get_time_ns() -> u64 {
+    let duration = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("SystemTime before UNIX EPOCH!");
+    duration.as_nanos() as u64
+}
+
+
+pub fn pp_sleep(mut ns: u64, threshold: u64){
+    if ns==0{
+        return;
+    }
+    let start = std::time::Instant::now();
+
+    if ns > threshold{
+        let sleep_duration = std::time::Duration::from_nanos(ns - threshold);
+        std::thread::sleep(sleep_duration);
+        // One might expect the diff to always be threshold nanoseconds,
+        // but given that thread::sleep might sleep for more than the requested time
+        // it might not always be the case.
+        let diff =  start.elapsed();
+        println!("diff {:?}", diff);
+        if diff.as_nanos() as u64 > ns{
+            return;
+        }
+        ns -= diff.as_nanos() as u64;
+        println!("NS is {ns} {:?}", diff);
+    }
+    let new_start = get_time_ns();
+    while get_time_ns() - new_start< ns {
+        // std::hint::spin_loop();
+        std::thread::yield_now();
+    }
+
+}
+\end{minted}
+
+Replacing line 17 with a call to the libc function "nanosleep" didn't make any significant difference.
+\begin{minted}{rust}
+unsafe { libc::nanosleep(&libc::timespec{tv_sec: sleep_duration.as_secs() as i64,
+tv_nsec: sleep_duration.subsec_nanos() as i64},
+&mut libc::timespec{tv_sec: 0, tv_nsec: 0}) };
+\end{minted}
+
+The function \mintinline{rust}{std::hint::spin_loop()} signal to the processor that the program is running in a busy-wait loop such that it might optimize its behaviour accordingly.\\
+On the other hand \mintinline{rust}{std::thread::yield_now()} signals to the OS that it can schedule another thread to run.\\
+During my experiments no other important job was running and the two functions didn't lead to different results. That said, I would imagine, that if something was running on the machine it would have benefited from the yield more.
+
+\subsection*{Benchmarking}
+The benchmark focuses on different combination of threshold and sleep times. To be noted that a sleep time lesser than the threshold will cause the program to go straight to the busy wait loop.\\
+The bigger the threshold the less we trust the thread to sleep for the correct amount, and therefore the more time will be spent busy waiting, resulting in higher precision but also higher CPU utilization.\\
+On the other hand, the smaller the threshold the lower the precision but also the lower the CPU utilization.\\
+For each of the considered sleep time intervals the following thresholds have been considered, 10\%, 30\%, 50\%, 70\% and 100\% of the interval value.\\
+For all the interval-threshold pairs a thousand run have been performed and the following metrics have been extracted: average, standard deviation, min and max. Additionally the number of cpu cycles, as reported by the 'perf' utility have been reported.
+
+\mycomment{
+\begin{figure}
+\begin{tabular}{|c|c|c|c|c|c|c|c|}
+\hline
+time \textbackslash threshold& 10 us& 100us & 1 ms& 10 ms & 100ms\\
+\hline
+10 us & 10.239µs & 10.259µs & 10.22µs & 10.199µs & 10.312µs  \\
+15 us &  138.473µs &  15.313µs &  15.424µs & 15.509µs & 15.47µs  \\
+100 us &  208.701µs & 100.34µs & 100.956µ & 100.396µs & 100.295µs  \\
+150 us & 241.852µs & 187.562µs& 150.331µs & 150.225µs & 150.36µs \\
+1 ms & 1.066126ms & 1.020844ms & 1.000189ms &  1.000123ms &  1.000141ms  \\
+1.5 ms & 1.570332ms & 1.516313ms & 1.507756ms &  1.500144ms & 1.5001ms  \\
+10 ms &  21.048027ms &  21.82224ms & 20.110641ms & 10.000277ms & 10.000159ms  \\
+15 ms & 27.872708ms &  28.405085ms & 27.211017ms & 16.887357ms & 15.004988ms \\
+\hline
+\end{tabular}
+\caption{Average sleep duration for 1000 runs.}
+\end{figure}
+
+
+\begin{figure}
+\begin{tabular}{|c|c|c|c|c|c|c|c|}
+\hline
+ time \textbackslash threshold & 10 us& 100us & 1 ms& 10 ms & 100ms\\
+\hline
+10 us &  860ns &  1.493µs &  1.463µs & 402ns & 1.966µs \\
+15 us & 111.484µs &  2.379µs & 2.983µs & 2.69µs &  2.747µs \\
+100 us  & 103.685µs &  3.59µs & 15.575µs& 3.531µs & 1.83µs \\
+150 us & 235.384µs & 142.259µs & 4.513µs & 1.689µs & 3.927µs \\
+1 ms & 55.034µs & 80.585µs &  2.309µs & 526ns & 768ns \\
+1.5 ms &  92.86µs &  68.098µ &  5.219µs &  1.009µs & 235ns \\
+10 ms &  9.498259ms &  9.378539ms &  8.534847ms &  1.697µs & 545ns \\
+15 ms & 12.498682ms & 12.938796ms & 12.242686ms & 3.14076ms & 152.916µs \\
+
+\hline
+\end{tabular}
+\caption{Standard deviation of the sleep duration for 1000 runs.}
+\end{figure}
+
+
+\begin{figure}
+\begin{tabular}{|c|c|c|c|c|c|c|c|}
+\hline
+time \textbackslash threshold & 10 us& 100us & 1 ms& 10 ms & 100ms\\
+\hline
+10 us & 2.03 & 1.77 &  1.74 & 1.73 & 1.74 \\
+15 us & 28.18 & 1.76 & 1.74 & 1.73 &  1.74 \\
+100 us & 21.09 &  17.58 & 18.35 & 23.96 & 18.81 \\
+150 us & 21.32 & 21.09 &  22.22 & 18.46 &  20.59 \\
+1 ms & 4.76 & 6.05 & 23.70 & 23.50 & 24.78 \\
+1.5 ms 4.74 & 4.61 & 17.72 &  24.07 &  24.13 & 23.89 \\
+10 ms & 4.27 &  3.39 &  3.48 & 25.39 &  25.53 \\
+15 ms & 3.73 & 2.86 &  3.06 &  9.79 & 25.52 \\
+
+\hline
+\end{tabular}
+\caption{CPU utilization, in percentage, for 1000 runs.}
+\end{figure}
+
+
+From the figure it can be observed that the higher the threshold the closer the average sleep time is to the desired sleep duration but also the higher the CPU utilization.
+}
+
+The results for an interval of 10 ns are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+1 & 1.82 & 54.208µs & 3.671µs & 93.563µs & 17.052µs & 1,292,770,817 \\
+3 & 1.98 & 54.151µs & 4.204µs & 69.215µs & 12.612µs & 1,223,593,761 \\
+5 & 2.17 & 54.153µs & 3.818µs & 69.789µs & 13.859µs & 1,040,005,130 \\
+7 & 1.71 & 54.07µs & 4.157µs & 73.273µs & 13.272µs & 995,987,209 \\
+10 & 0.08 & 128ns & 13ns & 396ns & 112ns & 1,045,284,196 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 15 ns are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+1 & 0.00 & 54.1µs & 3.959µs & 57.413µs & 14.245µs & 1,009,280,213 \\
+4 & 2.45 & 54.11µs & 3.822µs & 58.821µs & 11.845µs & 979,457,769 \\
+7 & 1.85 & 54.161µs & 3.7µs & 63.578µs & 12.368µs & 1,187,044,185 \\
+10 & 2.32 & 54.157µs & 4.061µs & 89.302µs & 11.73µs & 1,177,543,195 \\
+15 & 0.08 & 129ns & 20ns & 551ns & 110ns & 1,249,183,871 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 100  ns are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+10 & 2.55 & 54.166µs & 4.367µs & 59.442µs & 9.485µs & 1,131,979,878 \\
+30 & 1.76 & 54.207µs & 3.594µs & 58.724µs & 12.17µs & 1,142,418,960 \\
+50 & 3.78 & 54.15µs & 4.066µs & 64.234µs & 12.697µs & 1,160,276,624 \\
+70 & 0.08 & 54.126µs & 4.176µs & 63.004µs & 12.913µs & 1,239,855,484 \\
+100 & 0.08 & 237ns & 12ns & 424ns & 199ns & 935,482,670 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 150 ns are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+15 & 1.59 & 54.408µs & 4.37µs & 127.848µs & 3.808µs & 883,695,824 \\
+45 & 2.11 & 54.135µs & 4.578µs & 59.605µs & 8.827µs & 1,220,884,017 \\
+75 & 1.83 & 54.263µs & 4.216µs & 85.658µs & 9.575µs & 1,323,922,169 \\
+105 & 2.05 & 54.113µs & 4.143µs & 57.865µs & 12.309µs & 1,035,703,301 \\
+150 & 0.08 & 290ns & 18ns & 516ns & 250ns & 1,107,198,431 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 1 us are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+100 & 2.42 & 55.345µs & 2.604µs & 63.126µs & 9.052µs & 1,302,105,478 \\
+300 & 2.04 & 54.91µs & 3.407µs & 61.949µs & 17.237µs & 1,196,755,197 \\
+500 & 2.27 & 54.786µs & 2.768µs & 60.653µs & 11.069µs & 1,116,844,894 \\
+700 & 2.64 & 54.782µs & 1.973µs & 86.007µs & 14.165µs & 1,117,529,684 \\
+1000 & 1.08 & 1.133µs & 39ns & 1.555µs & 1.097µs & 1,038,519,681 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 1.5 us are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+150 & 1.86 & 55.573µs & 2.856µs & 67.037µs & 24.533µs & 1,244,618,643 \\
+450 & 0.15 & 55.577µs & 2.514µs & 106.227µs & 11.74µs & 976,057,075 \\
+750 & 2.11 & 54.789µs & 4.066µs & 58.308µs & 11.775µs & 1,222,244,602 \\
+1050 & 1.04 & 54.778µs & 2.14µs & 68.199µs & 20.419µs & 1,194,708,117 \\
+1500 & 0.08 & 1.618µs & 120ns & 5.39µs & 1.6µs & 1,150,992,799 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 10 us are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+1000 & 1.77 & 63.481µs & 1.396µs & 81.578µs & 39.182µs & 1,264,717,970 \\
+3000 & 0.08 & 61.501µs & 1.418µs & 80.628µs & 38.082µs & 1,222,868,043 \\
+5000 & 1.52 & 59.313µs & 3.096µs & 66.467µs & 17.621µs & 803,308,551 \\
+7000 & 1.74 & 57.223µs & 3.227µs & 79.07µs & 10.205µs & 1,138,760,793 \\
+10000 & 4.05 & 10.132µs & 88ns & 12.813µs & 10.1µs & 1,169,912,804 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 15 us are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+1500 & 1.90 & 67.815µs & 2.122µs & 88.186µs & 34.378µs & 1,174,519,849 \\
+4500 & 1.75 & 64.662µs & 3.45µs & 69.046µs & 25.036µs & 1,180,978,389 \\
+7500 & 0.61 & 61.568µs & 4.377µs & 65.962µs & 15.101µs & 911,267,938 \\
+10500 & 4.49 & 60.625µs & 46.767µs & 1.525836ms & 15.37µs & 1,249,753,440 \\
+15000 & 0.08 & 15.15µs & 254ns & 22.883µs & 15.102µs & 896,255,272 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 100 us are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+10000 & 1.93 & 144.245µs & 3.528µs & 149.923µs & 100.135µs & 1,239,256,033 \\
+30000 & 2.09 & 124.498µs & 1.423µs & 133.395µs & 100.135µs & 1,295,299,746 \\
+50000 & 3.21 & 104.512µs & 470ns & 109.24µs & 100.139µs & 1,248,639,544 \\
+70000 & 2.63 & 100.186µs & 688ns & 117.063µs & 100.115µs & 1,426,524,998 \\
+100000 & 2.32 & 100.167µs & 929ns & 129.372µs & 100.1µs & 1,099,899,552 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 150 us are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+15000 & 1.25 & 189.462µs & 2.313µs & 196.669µs & 153.041µs & 1,184,275,644 \\
+45000 & 1.36 & 159.575µs & 689ns & 167.727µs & 150.151µs & 1,282,841,820 \\
+75000 & 1.41 & 150.153µs & 137ns & 154.408µs & 150.114µs & 1,225,850,558 \\
+105000 & 2.41 & 150.155µs & 70ns & 152.087µs & 150.116µs & 1,362,899,299 \\
+150000 & 2.72 & 150.151µs & 508ns & 166.169µs & 150.1µs & 1,727,093,748 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 1 ms are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+100000 & 0.33 & 1.000149ms & 22ns & 1.000333ms & 1.000116ms & 1,412,470,970 \\
+300000 & 0.30 & 1.000153ms & 21ns & 1.000471ms & 1.000121ms & 1,889,471,562 \\
+500000 & 0.19 & 1.000154ms & 20ns & 1.000501ms & 1.000119ms & 2,344,535,834 \\
+700000 & 0.72 & 1.000157ms & 245ns & 1.007862ms & 1.000116ms & 3,318,790,473 \\
+1000000 & 2.97 & 1.000133ms & 31ns & 1.000858ms & 1.000103ms & 4,721,123,317 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 1.5 ms are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+150000 & 0.54 & 1.500149ms & 84ns & 1.50273ms & 1.500116ms & 1,509,534,268 \\
+450000 & 1.25 & 1.500151ms & 21ns & 1.500386ms & 1.500116ms & 2,404,921,761 \\
+750000 & 1.93 & 1.500154ms & 77ns & 1.502304ms & 1.500117ms & 3,660,176,062 \\
+1050000 & 2.17 & 1.500147ms & 22ns & 1.500541ms & 1.500116ms & 4,847,482,729 \\
+1500000 & 3.05 & 1.500141ms & 80ns & 1.502485ms & 1.500102ms & 6,267,335,579 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 10 ms are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+1000000 & 0.67 & 10.000153ms & 25ns & 10.000556ms & 10.000117ms & 4,505,211,218 \\
+3000000 & 1.26 & 10.000155ms & 195ns & 10.006243ms & 10.000117ms & 11,575,441,552 \\
+5000000 & 1.90 & 10.000157ms & 40ns & 10.000865ms & 10.000121ms & 18,347,230,831 \\
+7000000 & 2.55 & 10.000159ms & 55ns & 10.000988ms & 10.00012ms & 25,602,213,237 \\
+10000000 & 3.25 & 10.000153ms & 189ns & 10.005752ms & 10.000106ms & 36,248,635,876 \\
+\bottomrule
+\end{tabular}
+
+
+The results for an interval of 15 ms are: \\
+\begin{tabular}{lllllll}
+\toprule
+ & cpu & avg & std & max & min & cpu cycles \\
+\midrule
+1500000 & 0.28 & 15.000171ms & 39ns & 15.000835ms & 15.000129ms & 6,379,589,778 \\
+4500000 & 0.86 & 15.000161ms & 68ns & 15.001562ms & 15.000117ms & 16,803,697,613 \\
+7500000 & 1.59 & 15.000161ms & 45ns & 15.000928ms & 15.000124ms & 27,021,733,735 \\
+10500000 & 2.11 & 15.000166ms & 46ns & 15.000891ms & 15.000124ms & 37,593,247,687 \\
+15000000 & 3.14 & 15.000149ms & 52ns & 15.000874ms & 15.000106ms & 53,755,412,530 \\
+\bottomrule
+\end{tabular}
+
+
+
+
+Firstly it can be noticed that for time intervals smaller than 1 us, even with busy waiting, the precision is pretty poor.\\
+Second, we obtain good results using a mix of \mintinline{rust}{std::thread::sleep} and busy waiting at the 100 us interval point using a threshold of 50\% of the interval. This would indicates that the thread sleep function on its own is capable of sub millisecond precision.\\
+Regarding CPU cycles it can be noticed that for intervals smaller than 1 ms the number of CPU cycles doesn't increase alongside the threshold as one would expect. Also there is a certain amount of fluctuation, with some bigger threshold taking less CPU cycles than the same interval with a smaller threshold.\\
+We can also notice that regardless of the fluctuations around 1 billions CPU cycles are performed, indicating that this is a minimum required amount of operations regardless of sleeping and busy waiting. Also removing all the printings from the rust code doesn't seem to change this result.\\
+For interval greater than 1 ms the trend is the one expected, in which the CPU utilization increases alongside the threshold.
+
+
+\subsection*{Automatic threshold choice}
+The crate 'det-bypass/det-bypass-rust/performance' contains some code which can be used to make an analysis of the performance of sleeping in rust.\\
+The 'main.rs' takes the desired sleep duration and threshold as arguments and invokes the sleep function a thousand times with these arguments and then outputs some results of these runs.\\
+
+A python script 'perf.py' has been provided to automatically invoke the rust crates with different combinations of sleep times and thresholds, perform some analysis, and output the results in a convenient way.\\
+
+In the 'sleep/' directory there is a tentative implementation of a sleep function which chooses the right threshold given a sleep duration and error tolerance.
+\begin{minted}{CPP}
+uint64_t get_threshold(uint64_t interval, uint64_t err){
+  std::map<uint64_t, std::map<uint64_t, uint64_t>> interval_to_err_to_threshold = {
+    {10, {{1020, 10.0}, {555410.0, 5.0}, {556980.0, 1.0},{562360.0, 3.0},{571610.0, 7.0}}}
+  };
+  std::vector<uint64_t> intervals = getKeys(interval_to_err_to_threshold);
+  auto closest_interval = std::lower_bound(intervals.begin(), intervals.end() ,interval);
+  if(closest_interval == intervals.end()){
+    closest_interval -=1;
+  }
+  const uint64_t inter = *closest_interval;
+  std::vector<uint64_t> errors = getKeys(interval_to_err_to_threshold.at(inter));
+  auto closest_error = std::lower_bound(errors.begin(), errors.end(), err);
+  if (closest_error == errors.end()){
+    closest_error -= 1;
+  }
+  auto error = *closest_error;
+  return interval_to_err_to_threshold.at(inter).at(error);
+}
+\end{minted}
+The function looks for the closest values, to the input, in a map.\\
+The previously discussed python code as part of its output produces a correctly formate CPP map which can be simply copied into the code.\\
+Thus to refine the map it is sufficient to change the granularity in the python script, invoke it, and use the results in the CPP code.
+
+\section*{Conclusion}
+Overall I would say that Rust is a nice productive language. It had features which allowed for concise code and the borrow checker and lifetime checks forced me to ensure the code was safe. Especially when threads were involved.\\
+That said all of the libraries and crates I have found were either incomplete, broken, undocumented, deprecated or a combination of these.\\
+I often had to fork crates to add needed feature and trouble shoot them in case they weren't working.\\
+The support for EBPF is still very experimental. Aya is poorly documented, and the example it provides aren't up do date. Having to code trying to avoid strange oddities was all but a smooth experience.\\
+Is my opinion that a few more years of development are needed before RUST can be used properly for this kind of projects.
+
+\end{document}
