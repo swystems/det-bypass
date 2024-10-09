@@ -1,25 +1,29 @@
 all:
   hosts:
     xdp1:
-      ansible_host: cloudlab1
+      ansible_host: swystems.xdp1
       isolated_cores_list:
         - 8
         - 9
       devs:
-        - ens1f1np1
+        - eno50np1
       ibdevs:
         - rocep3s0f1
-      ip: "10.10.1.1"
+      ip: "192.168.1.1"
     xdp2:
-      ansible_host: cloudlab2
+      ansible_host: swystems.xdp2
       isolated_cores_list:
         - 8
         - 9
       devs:
-        - ens1f1np1
+        - eno50np1
       ibdevs:
         - rocep3s0f1
-      ip: "10.10.1.2"
+      ip: "192.168.1.2"
+
+  vars:
+    ansible_user: dvr0
+    base_dir: "/users/dvr0/det-bypass"
 
 # All experiments use xdp1 as tx node and xdp2 as rx node
 poll_tx:
