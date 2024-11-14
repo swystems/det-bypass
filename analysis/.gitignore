@@ -1,8 +1,7 @@
 # data (size too large for GH)
 data
 data.tar.gz
-data.zip
-long_data.zip
+*.zip
 long_data
 data-0424*
 
