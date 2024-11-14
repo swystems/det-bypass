@@ -1,11 +1,7 @@
 # det-bypass
-Research on temporal determinism (stability) of current OS bypass methods.
+Research on temporal determinism (stability) of current OS bypass technologies.
 
-## Objective
-We want to evaluate latency and jitter in datacenter communication, using different
-kernel bypass methods. Moreover, we want to determine the system factors impacting
-jitter (determinism/stabililty). We focus particularly on periodic communication. 
-
+This repo contains a set of benchmarks to extract timestamps in a p2p setup.
 ## Methodology
 Tools:
 - no bypass
